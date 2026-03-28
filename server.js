@@ -1,8 +1,12 @@
 function buildReply(message = "", platform = "Telegram") {
   const text = String(message || "").toLowerCase().trim();
 
-  const checkoutLink =
-    process.env.CHECKOUT_LINK || "https://your-checkout-link.com";
+  const starterLink =
+    process.env.STARTER_LINK || "https://paypal.me/Phakhin573/99";
+  const growthLink =
+    process.env.GROWTH_LINK || "https://paypal.me/Phakhin573/299";
+  const premiumLink =
+    process.env.PREMIUM_LINK || "https://paypal.me/Phakhin573/699";
 
   if (!text) {
     return `Hi! 👋
@@ -59,7 +63,7 @@ To continue, please send:
 3. Your preferred platform (${platform})
 
 If you're ready to order now, use this secure checkout link:
-${checkoutLink}`;
+${starterLink}`;
   }
 
   if (text.includes("growth")) {
@@ -73,7 +77,7 @@ To continue, please send:
 3. Your preferred platform (${platform})
 
 If you're ready to order now, use this secure checkout link:
-${checkoutLink}`;
+${growthLink}`;
   }
 
   if (text.includes("premium")) {
@@ -87,7 +91,7 @@ To continue, please send:
 3. Your preferred platform (${platform})
 
 If you're ready to order now, use this secure checkout link:
-${checkoutLink}`;
+${premiumLink}`;
   }
 
   if (
@@ -112,8 +116,8 @@ To recommend the best package, please send:
 3. Your main goal
 4. Your platform (Telegram / IG / WhatsApp)
 
-If you already want to move forward now, here is the checkout link:
-${checkoutLink}`;
+If you already want to move forward now, tell me:
+Starter / Growth / Premium`;
   }
 
   if (
@@ -130,14 +134,18 @@ ${checkoutLink}`;
   ) {
     return `Perfect — you're ready to move forward ✅
 
-Before checkout, please send:
+Please choose one package:
+• Starter — $99
+• Growth — $299
+• Premium — $699
+
+Then send me:
 1. Your name
 2. Your business type
 3. Your preferred platform
-4. Your package choice (Starter / Growth / Premium)
+4. Your package choice
 
-Then complete your order here:
-${checkoutLink}`;
+I’ll send you the correct payment link right away.`;
   }
 
   if (
@@ -157,16 +165,13 @@ For your business, I recommend a setup that:
 • replies fast
 • builds trust
 • qualifies customers
-• guides them toward booking or payment
+• guides them toward payment
 
 Now send me:
 1. Your target customers
 2. Your main goal
 3. Your platform
-4. Your preferred package
-
-If you prefer to start immediately, use this checkout link:
-${checkoutLink}`;
+4. Your preferred package (Starter / Growth / Premium)`;
   }
 
   return `Thanks for your message 👋
@@ -179,6 +184,6 @@ Please send:
 3. Your main goal
 4. Your preferred platform
 
-If you're ready to order now, here is the checkout link:
-${checkoutLink}`;
+Or reply with:
+Starter / Growth / Premium`;
 }

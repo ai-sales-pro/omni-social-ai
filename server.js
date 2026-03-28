@@ -1,3 +1,12 @@
+const express = require("express");
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(__dirname));
+
 function buildReply(message = "", platform = "Telegram") {
   const text = String(message || "").toLowerCase().trim();
 
@@ -33,16 +42,19 @@ Please send:
 1. Starter — $99
 • basic auto-reply setup
 • simple lead reply flow
+👉 ${starterLink}
 
 2. Growth — $299
 • smarter sales replies
 • lead qualification
 • better conversion flow
+👉 ${growthLink}
 
 3. Premium — $699
 • full AI closing system
 • advanced reply flow
 • custom business setup
+👉 ${premiumLink}
 
 Reply with:
 • Starter
@@ -187,3 +199,69 @@ Please send:
 Or reply with:
 Starter / Growth / Premium`;
 }
+
+app.get("/", (req, res) => {
+  res.send("AI Sales Bot Running 🚀");
+});
+
+app.get("/health", (req, res) => {
+  res.json({ ok: true, service: "ai-sales-system" });
+});
+
+app.get("/chat", (req, res) => {
+  const message = req.query.message || "";
+  const reply = buildReply(message, "Web");
+  res.send(reply);
+});
+
+app.post("/api/generate-reply", (req, res) => {
+  const { message, platform } = req.body || {};
+  const reply = buildReply(message, platform || "Telegram");
+  res.json({ ok: true, reply });
+});
+
+app.post("/webhook/telegram", async (req, res) => {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const body = req.body || {};
+  const chatId = body?.message?.chat?.id;
+  const messageText = body?.message?.text || "";
+
+  if (!chatId) {
+    return res.json({ ok: true, note: "No chat id found" });
+  }
+
+  const reply = buildReply(messageText, "Telegram");
+
+  if (!token) {
+    return res.json({
+      ok: false,
+      error: "Missing TELEGRAM_BOT_TOKEN",
+      preview_reply: reply
+    });
+  }
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: reply
+      })
+    });
+
+    const data = await response.json();
+    return res.json({ ok: true, telegram_response: data });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: String(error)
+    });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log("Server running on port " + PORT);
+});

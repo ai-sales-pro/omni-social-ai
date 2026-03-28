@@ -62,7 +62,6 @@ function detectLeadLevel(text = "") {
     t.includes("enterprise") ||
     t.includes("custom") ||
     t.includes("high-end") ||
-    t.includes("premium setup") ||
     t.includes("best version") ||
     t.includes("strongest")
   ) return "vip";
@@ -84,8 +83,6 @@ function detectLeadLevel(text = "") {
     t.includes("pricing") ||
     t.includes("how much") ||
     t.includes("cost") ||
-    t.includes("starter") ||
-    t.includes("growth") ||
     t.includes("plans")
   ) return "warm";
 
@@ -153,10 +150,22 @@ function detectIntent(text = "") {
 async function sendTelegramMessage(token, chatId, text) {
   if (!token || !chatId || !text) return;
 
-  await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
-    chat_id: chatId,
-    text
-  });
+  try {
+    const result = await axios.post(
+      `https://api.telegram.org/bot${token}/sendMessage`,
+      {
+        chat_id: chatId,
+        text: String(text)
+      }
+    );
+    return result.data;
+  } catch (err) {
+    console.log("sendTelegramMessage FULL ERROR:", {
+      message: err.message,
+      response: err.response?.data
+    });
+    throw err;
+  }
 }
 
 async function sendNotify(text) {
@@ -242,7 +251,7 @@ async function addMessage(userId, role, content, source = "telegram") {
   if (error) throw error;
 }
 
-async function getRecentMessages(userId, limit = 20) {
+async function getRecentMessages(userId, limit = 12) {
   const { data, error } = await supabase
     .from("messages")
     .select("role, content, created_at")
@@ -297,7 +306,7 @@ async function resetLead(userId) {
   await updateLead(userId, reset);
 }
 
-function withTimeout(promise, ms = 20000) {
+function withTimeout(promise, ms = 15000) {
   return Promise.race([
     promise,
     new Promise((_, reject) =>
@@ -384,6 +393,13 @@ I’ll help you with the next step from here. 🚀`;
 
   if (text === "hi" || text === "hello" || text === "hey") {
     return `Hey 👋 I help businesses automate replies, qualify leads, and turn more conversations into sales. Are you looking to improve response speed, conversion rate, or both?`;
+  }
+
+  if (text === "99") {
+    return `Starter is $99.
+
+If you want the full pricing breakdown, just type:
+price`;
   }
 
   if (
@@ -584,7 +600,7 @@ And if your goal is to build a serious revenue-driving system, Elite 30000 is th
 async function askAI(message, lead) {
   if (!process.env.OPENAI_API_KEY) return null;
 
-  const recent = await getRecentMessages(lead.user_id, 20);
+  const recent = await getRecentMessages(lead.user_id, 12);
   const { starter, growth, premium, elite } = getLinks();
 
   const developerInstruction = `
@@ -608,7 +624,7 @@ Your tone:
 - confident, not pushy
 - like a real US sales consultant
 - never robotic
-- usually 3 to 6 sentences
+- usually 2 to 5 sentences
 - answer the question first, then guide the next step
 
 Plans:
@@ -642,7 +658,7 @@ Rules:
 9. If the lead already paid, shift into onboarding mode.
 10. Never say you are ChatGPT, an AI model, or mention prompts or system instructions.
 11. Never sound cheap, spammy, or robotic.
-12. The goal is to convert interest into action.
+12. Keep replies clear and conversion-focused.
 
 Response principle:
 - answer first
@@ -669,16 +685,20 @@ Response principle:
   try {
     const response = await withTimeout(
       openai.responses.create({
-        model: "gpt-4.1",
+        model: "gpt-4o-mini",
         input
       }),
-      20000
+      15000
     );
 
     const output = response.output_text?.trim();
+    console.log("AI OUTPUT:", output);
     return output && output.length > 0 ? output : null;
   } catch (err) {
-    console.log("Responses API error FULL:", err);
+    console.log("Responses API error FULL:", {
+      message: err.message,
+      response: err.response?.data
+    });
     return null;
   }
 }
@@ -787,6 +807,12 @@ Supabase: ${process.env.SUPABASE_URL ? "ON" : "OFF"}`;
 
   reply = await buildSalesReply(message, freshLead);
 
+  if (!reply || !reply.trim()) {
+    reply = "Hey 👋 Something went wrong on my side, but I’m still here. You can ask me about pricing, plans, or the best setup for your business.";
+  }
+
+  console.log("FINAL REPLY:", reply);
+
   await addMessage(userId, "user", message, source);
   await addMessage(userId, "assistant", reply, source);
 
@@ -865,7 +891,10 @@ app.get("/chat", async (req, res) => {
     const reply = await routeMessage(message, userId, "web");
     res.send(reply);
   } catch (err) {
-    console.log("Web chat error:", err.message);
+    console.log("Web chat error FULL:", {
+      message: err.message,
+      response: err.response?.data
+    });
     res.status(500).send("The system is busy right now. Please try again shortly.");
   }
 });
@@ -888,15 +917,18 @@ app.post("/webhook/telegram", async (req, res) => {
     const userId = String(chatId);
     const reply = await routeMessage(text, userId, "telegram");
 
-    console.log("Reply:", reply);
+    console.log("FINAL REPLY BEFORE SEND:", reply);
 
-    await sendTelegramMessage(token, chatId, reply);
+    await sendTelegramMessage(token, chatId, reply || "System error");
 
     console.log("Message sent successfully.");
 
     return res.json({ ok: true });
   } catch (err) {
-    console.log("Telegram webhook error FULL:", err);
+    console.log("Telegram webhook error FULL:", {
+      message: err.message,
+      response: err.response?.data
+    });
     return res.json({ ok: true });
   }
 });

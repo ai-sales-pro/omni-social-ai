@@ -1,7 +1,12 @@
 const express = require("express");
+const OpenAI = require("openai");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -88,9 +93,42 @@ function detectLeadLevel(text) {
 }
 
 function rememberPackage(user, text) {
-  if (text.includes("starter")) user.order.package = "Starter";
-  if (text.includes("growth")) user.order.package = "Growth";
-  if (text.includes("premium")) user.order.package = "Premium";
+  const t = String(text).toLowerCase();
+  if (t.includes("starter")) user.order.package = "Starter";
+  if (t.includes("growth")) user.order.package = "Growth";
+  if (t.includes("premium")) user.order.package = "Premium";
+}
+
+function isSalesFlowMessage(text = "") {
+  const t = String(text).toLowerCase().trim();
+
+  return (
+    t.includes("price") ||
+    t.includes("pricing") ||
+    t.includes("how much") ||
+    t.includes("多少") ||
+    t.includes("價錢") ||
+    t.includes("starter") ||
+    t.includes("growth") ||
+    t.includes("premium") ||
+    t.includes("buy") ||
+    t.includes("order") ||
+    t.includes("我要買") ||
+    t.includes("下單") ||
+    t.includes("付款") ||
+    t.includes("paid") ||
+    t.includes("已付款") ||
+    t.includes("貴") ||
+    t.includes("太貴") ||
+    t.includes("expensive") ||
+    t.includes("考慮") ||
+    t.includes("再想想") ||
+    t.includes("agency") ||
+    t.includes("company") ||
+    t.includes("公司") ||
+    t.includes("品牌") ||
+    t.includes("客戶很多")
+  );
 }
 
 function buildReply(message = "", userId = "web") {
@@ -292,8 +330,89 @@ price
 我會幫你推薦最適合的方案 💰`;
 }
 
+async function askGPT(message = "", userId = "web") {
+  const user = getUser(userId);
+
+  if (!process.env.OPENAI_API_KEY) {
+    return buildReply(message, userId);
+  }
+
+  const starter = process.env.STARTER_LINK || "https://paypal.me/Phakhin573/99";
+  const growth = process.env.GROWTH_LINK || "https://paypal.me/Phakhin573/299";
+  const premium = process.env.PREMIUM_LINK || "https://paypal.me/Phakhin573/699";
+
+  const systemPrompt = `
+你是一個專業銷售 AI 助理，服務內容是：
+幫客戶建立 AI 自動回覆、Telegram / IG / WhatsApp 自動接單與成交系統。
+
+你的任務：
+1. 用自然、專業、像真人的方式回覆客戶。
+2. 先了解需求，再引導到價格與方案。
+3. 回覆不要太長，控制在 3 到 6 句。
+4. 可以適度使用 emoji，但不要太多。
+5. 如果客戶是在閒聊、問功能、問用途，就介紹服務價值。
+6. 如果客戶明確問價格、付款、方案，請不要自由發揮價格，交給既定銷售流程。
+
+目前固定方案：
+Starter — $99 — ${starter}
+Growth — $299 — ${growth}
+Premium — $699 — ${premium}
+
+客戶目前資料：
+- lead level: ${user.level}
+- selected package: ${user.order.package || "未選擇"}
+- paid: ${user.paid ? "yes" : "no"}
+- name: ${user.order.name || ""}
+- industry: ${user.order.industry || ""}
+- platform: ${user.order.platform || ""}
+
+禁止事項：
+- 不要亂改價格
+- 不要承諾做不到的功能
+- 不要說自己是 ChatGPT
+- 如果客戶問價格、付款、套餐，請簡短引導，例如叫他輸入 price，或直接交給方案流程
+`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: String(message || "") }
+      ],
+      temperature: 0.8,
+      max_tokens: 300
+    });
+
+    return response.choices[0]?.message?.content?.trim() || buildReply(message, userId);
+  } catch (err) {
+    console.log("GPT error:", err);
+    return buildReply(message, userId);
+  }
+}
+
+async function getSmartReply(message = "", userId = "web") {
+  const text = String(message || "").trim();
+  const user = getUser(userId);
+
+  user.lastMessage = message;
+  user.lastIntent = text.toLowerCase();
+  user.level = detectLeadLevel(text);
+  rememberPackage(user, text);
+
+  if (user.collecting) {
+    return buildReply(message, userId);
+  }
+
+  if (isSalesFlowMessage(text)) {
+    return buildReply(message, userId);
+  }
+
+  return askGPT(message, userId);
+}
+
 app.get("/", (req, res) => {
-  res.send("AI Sales 15.0 Running 🚀");
+  res.send("AI Sales 16.0 Running 🚀");
 });
 
 app.get("/chat", async (req, res) => {
@@ -301,7 +420,7 @@ app.get("/chat", async (req, res) => {
   const userId = req.query.user || "web";
   const user = getUser(userId);
 
-  const reply = buildReply(message, userId);
+  const reply = await getSmartReply(message, userId);
 
   await sendNotify(`📩 Web 客戶訊息
 
@@ -323,7 +442,7 @@ app.post("/webhook/telegram", async (req, res) => {
   }
 
   const user = getUser(String(chatId));
-  const reply = buildReply(text, String(chatId));
+  const reply = await getSmartReply(text, String(chatId));
 
   try {
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -351,5 +470,5 @@ app.post("/webhook/telegram", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log("AI Sales 15.0 Running on port " + PORT);
+  console.log("AI Sales 16.0 Running on port " + PORT);
 })

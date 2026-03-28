@@ -61,15 +61,10 @@ function detectLeadLevel(text = "") {
     t.includes("many customers") ||
     t.includes("enterprise") ||
     t.includes("custom") ||
-    t.includes("大量") ||
-    t.includes("公司") ||
-    t.includes("品牌") ||
-    t.includes("團隊") ||
-    t.includes("客製") ||
-    t.includes("企業") ||
-    t.includes("高端") ||
-    t.includes("頂級") ||
-    t.includes("最強")
+    t.includes("high-end") ||
+    t.includes("premium setup") ||
+    t.includes("best version") ||
+    t.includes("strongest")
   ) return "vip";
 
   if (
@@ -77,11 +72,10 @@ function detectLeadLevel(text = "") {
     t.includes("elite") ||
     t.includes("buy") ||
     t.includes("ready") ||
-    t.includes("付款") ||
-    t.includes("已付款") ||
-    t.includes("我要買") ||
-    t.includes("可以開始") ||
-    t.includes("馬上開始") ||
+    t.includes("paid") ||
+    t.includes("payment done") ||
+    t.includes("i want it") ||
+    t.includes("let's do it") ||
     t.includes("start now")
   ) return "hot";
 
@@ -89,12 +83,10 @@ function detectLeadLevel(text = "") {
     t.includes("price") ||
     t.includes("pricing") ||
     t.includes("how much") ||
-    t.includes("多少") ||
-    t.includes("價錢") ||
-    t.includes("費用") ||
+    t.includes("cost") ||
     t.includes("starter") ||
     t.includes("growth") ||
-    t.includes("方案")
+    t.includes("plans")
   ) return "warm";
 
   return "cold";
@@ -110,16 +102,14 @@ function detectIntent(text = "") {
   if (t === "/handover") return "admin_handover";
   if (t === "/ai") return "admin_ai";
 
-  if (t.includes("已付款") || t === "paid" || t.includes("payment done")) return "paid";
+  if (t.includes("paid") || t.includes("payment done") || t.includes("i paid")) return "paid";
 
   if (
     t.includes("price") ||
     t.includes("pricing") ||
     t.includes("how much") ||
-    t.includes("多少") ||
-    t.includes("價錢") ||
-    t.includes("費用") ||
-    t.includes("方案")
+    t.includes("cost") ||
+    t.includes("plans")
   ) return "pricing";
 
   if (
@@ -132,29 +122,29 @@ function detectIntent(text = "") {
   if (
     t.includes("buy") ||
     t.includes("order") ||
-    t.includes("我要買") ||
-    t.includes("下單") ||
-    t.includes("付款") ||
-    t.includes("開始做")
+    t.includes("i want it") ||
+    t.includes("let's do it") ||
+    t.includes("start") ||
+    t.includes("payment")
   ) return "buy";
 
   if (
     t.includes("discount") ||
-    t.includes("便宜") ||
-    t.includes("貴") ||
-    t.includes("太貴") ||
+    t.includes("cheap") ||
     t.includes("expensive") ||
-    t.includes("考慮") ||
-    t.includes("再想想")
+    t.includes("too expensive") ||
+    t.includes("thinking") ||
+    t.includes("not sure") ||
+    t.includes("maybe later")
   ) return "objection";
 
   if (
     t.includes("support") ||
     t.includes("help") ||
-    t.includes("修改") ||
-    t.includes("設定") ||
-    t.includes("教學") ||
-    t.includes("售後")
+    t.includes("edit") ||
+    t.includes("setup") ||
+    t.includes("tutorial") ||
+    t.includes("after sales")
   ) return "support";
 
   return "chat";
@@ -195,7 +185,7 @@ async function getLead(userId) {
   const newLead = {
     user_id: String(userId),
     source: "telegram",
-    language: "zh",
+    language: "en",
     level: "cold",
     stage: "lead",
     paid: false,
@@ -282,7 +272,7 @@ async function createOrderFromLead(lead) {
 
 async function resetLead(userId) {
   const reset = {
-    language: "zh",
+    language: "en",
     level: "cold",
     stage: "lead",
     paid: false,
@@ -326,7 +316,7 @@ async function buildSalesReply(message, lead) {
       notes: "collect_industry",
       stage: "onboarding"
     });
-    return "很好，請問你的行業是什麼？例如：電商 / 教育 / 房地產 / 餐飲";
+    return "Awesome — what industry are you in? For example: e-commerce, coaching, real estate, restaurant, or agency.";
   }
 
   if (lead.notes === "collect_industry") {
@@ -334,7 +324,7 @@ async function buildSalesReply(message, lead) {
       industry: message,
       notes: "collect_platform"
     });
-    return "你想先用在哪個平台？例如：Telegram / IG / WhatsApp / Website";
+    return "Which platform do you want to use first? For example: Telegram, Instagram, WhatsApp, or Website.";
   }
 
   if (lead.notes === "collect_platform") {
@@ -342,7 +332,7 @@ async function buildSalesReply(message, lead) {
       platform: message,
       notes: "collect_budget"
     });
-    return "你的預算大概是多少？例如：100 / 300 / 700 / 30000 美金";
+    return "What’s your approximate budget? For example: $100, $300, $700, or $30,000.";
   }
 
   if (lead.notes === "collect_budget") {
@@ -350,7 +340,7 @@ async function buildSalesReply(message, lead) {
       budget: message,
       notes: "collect_goal"
     });
-    return "你最想先解決的目標是什麼？例如：自動回覆 / 增加詢問 / 提高成交 / 多平台整合";
+    return "What’s your main goal right now? For example: automate replies, increase inquiries, improve conversion, or multi-platform setup.";
   }
 
   if (lead.notes === "collect_goal") {
@@ -369,47 +359,48 @@ async function buildSalesReply(message, lead) {
 
     await createOrderFromLead(updatedLead);
 
-    await sendNotify(`💰 新完整訂單
+    await sendNotify(`💰 New complete order
 
-🆔 User: ${updatedLead.user_id}
-⭐ 等級: ${updatedLead.level}
-📦 方案: ${updatedLead.package || "未標記"}
-👤 名字: ${updatedLead.name || "未填"}
-📊 行業: ${updatedLead.industry || "未填"}
-📱 平台: ${updatedLead.platform || "未填"}
-💵 預算: ${updatedLead.budget || "未填"}
-🎯 目標: ${updatedLead.goal || "未填"}`);
+User: ${updatedLead.user_id}
+Level: ${updatedLead.level}
+Package: ${updatedLead.package || "Not set"}
+Name: ${updatedLead.name || "Not set"}
+Industry: ${updatedLead.industry || "Not set"}
+Platform: ${updatedLead.platform || "Not set"}
+Budget: ${updatedLead.budget || "Not set"}
+Goal: ${updatedLead.goal || "Not set"}`);
 
-    return `✅ 收到，資料已完整！
+    return `Perfect — I’ve got everything I need.
 
-📦 方案：${updatedLead.package || "未標記"}
-👤 名字：${updatedLead.name || "未填"}
-📊 行業：${updatedLead.industry || "未填"}
-📱 平台：${updatedLead.platform || "未填"}
-💵 預算：${updatedLead.budget || "未填"}
-🎯 目標：${updatedLead.goal || "未填"}
+Package: ${updatedLead.package || "Not selected"}
+Name: ${updatedLead.name || "Not set"}
+Industry: ${updatedLead.industry || "Not set"}
+Platform: ${updatedLead.platform || "Not set"}
+Budget: ${updatedLead.budget || "Not set"}
+Goal: ${updatedLead.goal || "Not set"}
 
-我會幫你安排下一步 🚀`;
+I’ll help you with the next step from here. 🚀`;
   }
 
-  if (text === "hi" || text === "hello" || text === "你好" || text === "哈囉") {
-    return `Hi 👋 我這邊是 AI 自動成交系統，可以幫你做 Telegram / IG / WhatsApp 自動回覆、提升詢問轉單率，也能減少人工客服時間。你現在比較想先了解功能，還是直接看適合你的方案？`;
+  if (text === "hi" || text === "hello" || text === "hey") {
+    return `Hey 👋 I help businesses automate replies, qualify leads, and turn more conversations into sales. Are you looking to improve response speed, conversion rate, or both?`;
   }
 
   if (
-    text.includes("你是做什麼") ||
-    text.includes("做什麼") ||
-    text.includes("什麼功能")
+    text.includes("what do you do") ||
+    text.includes("what is this") ||
+    text.includes("what can you do") ||
+    text.includes("how does this work")
   ) {
-    return `我主要是幫你做 AI 自動回覆和自動成交流程。像客戶私訊進來後，系統可以先自動回答、介紹方案、收集需求，甚至一步一步引導到成交。這樣不只省客服時間，也比較不容易漏單。`;
+    return `I build AI sales systems that can reply to leads, guide them through your offers, collect key details, and help move conversations toward conversion. In simple terms, it saves you time and helps you close more leads automatically.`;
   }
 
   if (
-    text.includes("最好的版本") ||
-    text.includes("最強") ||
-    text.includes("頂級") ||
-    text.includes("企業版") ||
-    text.includes("客製版") ||
+    text.includes("best version") ||
+    text.includes("strongest") ||
+    text.includes("top version") ||
+    text.includes("enterprise") ||
+    text.includes("custom") ||
     text.includes("30000")
   ) {
     await updateLead(lead.user_id, {
@@ -418,37 +409,32 @@ async function buildSalesReply(message, lead) {
       asked_price: true
     });
 
-    return `如果你要的是最完整、最像真人業務、而且真的能幫你提升成交率的版本，我會直接建議 Elite 30000。這套不是普通聊天機器人，而是商業級 AI 成交系統，可做自然聊天、客戶分級、追單和客製流程。👉 ${elite}`;
+    return `If you want the most advanced option, I’d recommend the Elite 30000 system. This is not just a simple chatbot — it’s a custom AI sales system built to handle natural conversations, lead qualification, follow-up, and high-end conversion flow. 👉 ${elite}`;
   }
 
-  if (text.includes("已付款") || text === "paid" || text.includes("payment done")) {
+  if (text.includes("paid") || text.includes("payment done") || text.includes("i paid")) {
     await updateLead(lead.user_id, {
       paid: true,
       stage: "paid",
       notes: "collect_name"
     });
 
-    await sendNotify(`💳 客戶表示已付款
+    await sendNotify(`💳 Customer says they paid
 
-🆔 User: ${lead.user_id}
-⭐ 等級: ${lead.level}
-📦 方案: ${lead.package || "未標記"}
-💬 Message: ${message}`);
+User: ${lead.user_id}
+Level: ${lead.level}
+Package: ${lead.package || "Not set"}
+Message: ${message}`);
 
-    return `太好了！🎉
-
-我已記錄你的付款。
-現在我先收集你的資料，請先給我你的名字：`;
+    return `Amazing 🎉 I’ve marked your payment. Let’s get started — first, what name should I put on your setup?`;
   }
 
   if (
     text.includes("price") ||
     text.includes("pricing") ||
     text.includes("how much") ||
-    text.includes("多少") ||
-    text.includes("價錢") ||
-    text.includes("費用") ||
-    text.includes("方案")
+    text.includes("cost") ||
+    text.includes("plans")
   ) {
     await updateLead(lead.user_id, {
       asked_price: true,
@@ -458,152 +444,141 @@ async function buildSalesReply(message, lead) {
 
     if (lead.level === "vip") {
       await updateLead(lead.user_id, { package: "Elite 30000" });
-      return `💎 以你的需求規模，我會直接建議 30000 美金頂級版
+      return `Based on your needs, I’d strongly recommend the Elite 30000 version.
 
-這套適合品牌 / 團隊 / 公司 / 高客單市場，
-可以做到真正商業級 AI 成交、自動追單、多平台整合與客製流程。
+It’s designed for brands, teams, agencies, and businesses that want a true custom AI sales system with advanced conversation flow, follow-up logic, and multi-platform support.
 
 👉 ${elite}
 
-如果你想先看一般版本，我也可以給你 Starter / Growth / Premium。`;
+If you want, I can also show you the smaller options first.`;
     }
 
-    return `🔥 目前方案如下：
+    return `Here are the current options:
 
 Starter — $99
 👉 ${starter}
 
-Growth — $299（最熱門）
+Growth — $299 (most popular)
 👉 ${growth}
 
 Premium — $699
 👉 ${premium}
 
-Elite 30000 — 商業級客製 AI 成交系統
+Elite 30000 — custom business-grade AI sales system
 👉 ${elite}
 
-你可以直接回覆：
+You can reply with:
 Starter / Growth / Premium / Elite`;
   }
 
   if (text.includes("starter")) {
     await updateLead(lead.user_id, { package: "Starter" });
-    return `Starter — $99 ✅
+    return `Starter — $99
 
-適合先測試、先快速上線：
+Best if you want to test quickly and get started with a smaller budget.
 👉 ${starter}
 
-付款後回覆：
-已付款`;
+After payment, reply with:
+Paid`;
   }
 
   if (text.includes("growth")) {
     await updateLead(lead.user_id, { package: "Growth" });
-    return `Growth — $299 🚀
+    return `Growth — $299
 
-這是最多人選的方案，平衡效果和成本：
+This is the most popular option because it gives you the best balance between results and cost.
 👉 ${growth}
 
-付款後回覆：
-已付款`;
+After payment, reply with:
+Paid`;
   }
 
   if (text.includes("premium")) {
     await updateLead(lead.user_id, { package: "Premium" });
-    return `Premium — $699 💎
+    return `Premium — $699
 
-這是高效完整版本，適合想做得更強的人：
+This is the stronger, more complete version if you want more automation and better conversion flow.
 👉 ${premium}
 
-付款後回覆：
-已付款`;
+After payment, reply with:
+Paid`;
   }
 
   if (text.includes("elite")) {
     await updateLead(lead.user_id, { package: "Elite 30000" });
-    return `Elite 30000 — 商業級 AI 成交系統 💎
+    return `Elite 30000
 
-可客製流程、品牌語氣、多平台整合、自動追單與高端成交設計。
+This is a custom business-grade AI sales system built for serious growth.
+It can be tailored to your brand, sales process, lead flow, and platforms.
 👉 ${elite}
 
-如果你要，我也可以先依你的產業幫你規劃。`;
+If you want, I can help you map the right setup first.`;
   }
 
   if (
     text.includes("buy") ||
     text.includes("order") ||
-    text.includes("我要買") ||
-    text.includes("下單") ||
-    text.includes("付款") ||
-    text.includes("開始做")
+    text.includes("i want it") ||
+    text.includes("let's do it") ||
+    text.includes("let us start") ||
+    text.includes("start")
   ) {
     if (lead.level === "vip") {
       await updateLead(lead.user_id, { package: lead.package || "Elite 30000" });
-      return `🔥 以你的需求，我建議你直接走高端版本：
+      return `Based on your needs, I’d recommend going with the higher-end setup:
 
-Elite 30000 — 商業級客製 AI 成交系統
+Elite 30000 — custom AI sales system
 👉 ${elite}
 
-如果你想先從標準高效版開始，也可以選：
+If you want a faster standard option first, Premium is also strong:
 Premium — $699
 👉 ${premium}`;
     }
 
     await updateLead(lead.user_id, { package: lead.package || "Growth" });
-    return `🔥 建議你直接選這個最平衡的版本：
+    return `If you want the best balance of value and performance, I’d recommend Growth.
 
 Growth — $299
 👉 ${growth}
 
-如果你想做得更完整，也可以考慮：
+If you want the stronger version, Premium is here too:
 Premium — $699
 👉 ${premium}`;
   }
 
   if (
-    text.includes("discount") ||
-    text.includes("便宜") ||
-    text.includes("貴") ||
-    text.includes("太貴") ||
+    text.includes("too expensive") ||
     text.includes("expensive") ||
-    text.includes("考慮") ||
-    text.includes("再想想")
+    text.includes("not sure") ||
+    text.includes("thinking") ||
+    text.includes("maybe later") ||
+    text.includes("discount")
   ) {
     await updateLead(lead.user_id, {
       asked_discount: true,
       next_followup_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString()
     });
 
-    return `沒問題 👍
+    return `Totally fair.
 
-如果你想先低風險開始，我建議先從：
-
+If you want to start smaller, I’d recommend:
 Growth — $299
 👉 ${growth}
 
-如果你只想先測試，也可以從：
-
+If you just want to test first:
 Starter — $99
 👉 ${starter}
 
-如果你要的是更高階、真正幫你擴大營收的版本，也可以直接看：
-Elite 30000
+And if your goal is to build a serious revenue-driving system, Elite 30000 is the right long-term move:
 👉 ${elite}`;
   }
 
   if (lead.paid) {
     await updateLead(lead.user_id, { stage: "support" });
-    return "我已收到，你現在可以直接告訴我你要修改、設定，或想先開始哪一部分。";
+    return "Got it — you can now tell me exactly what you want to change, set up, or launch first.";
   }
 
-  return `Hi 👋
-
-這裡是 AI 自動成交系統。
-
-你可以直接輸入：
-price
-
-我會幫你推薦最適合的方案 💰`;
+  return `Hey 👋 This is an AI sales system built to help you automate replies and close more conversations. If you want, I can show you the pricing or help you figure out which setup fits you best.`;
 }
 
 async function askAI(message, lead) {
@@ -613,40 +588,40 @@ async function askAI(message, lead) {
   const { starter, growth, premium, elite } = getLinks();
 
   const developerInstruction = `
-你是一個 30000 美金等級的頂級 AI 業務成交助理。
+You are a premium AI sales closer for the US market.
 
-你的工作不是只回答問題，而是像真人高級顧問一樣，和客戶自然聊天、建立信任、理解需求、引導成交。
+Your job is not just to answer questions. Your job is to talk like a smart, confident sales consultant, build trust, understand the lead, and move the conversation toward conversion.
 
-你的服務：
-- AI 自動回覆系統
-- Telegram / Instagram / WhatsApp 自動接單
-- 客服自動化
-- 銷售流程自動化
-- 私訊自動成交
-- 品牌化 AI 業務系統
-- 高價方案客製化
+What you sell:
+- AI auto-reply systems
+- Telegram / Instagram / WhatsApp automation
+- sales automation
+- lead qualification systems
+- private-message conversion systems
+- custom AI sales workflows
 
-你的風格：
-- 像真人，不像機器人
-- 專業、有價值感、自然
-- 不要死板
-- 回覆控制在 3 到 6 句
-- 要真的回答客戶
-- 回答完要順勢推進下一步
-- 不要一直只叫客戶輸入 price
-- 不要提自己是 ChatGPT 或 AI 模型
+Your tone:
+- natural
+- professional
+- persuasive
+- concise but valuable
+- confident, not pushy
+- like a real US sales consultant
+- never robotic
+- usually 3 to 6 sentences
+- answer the question first, then guide the next step
 
-方案如下：
+Plans:
 Starter — $99 — ${starter}
 Growth — $299 — ${growth}
 Premium — $699 — ${premium}
-Elite 30000 — 商業級客製 AI 成交系統 — ${elite}
+Elite 30000 — custom business-grade AI sales system — ${elite}
 
-客戶狀態：
+Lead profile:
 - language: ${lead.language}
-- lead level: ${lead.level}
+- level: ${lead.level}
 - stage: ${lead.stage}
-- selected package: ${lead.package || "未選擇"}
+- selected package: ${lead.package || "none"}
 - paid: ${lead.paid ? "yes" : "no"}
 - industry: ${lead.industry || ""}
 - platform: ${lead.platform || ""}
@@ -655,24 +630,25 @@ Elite 30000 — 商業級客製 AI 成交系統 — ${elite}
 - asked price before: ${lead.asked_price ? "yes" : "no"}
 - asked discount before: ${lead.asked_discount ? "yes" : "no"}
 
-規則：
-1. 幾乎每個問題都直接回答。
-2. 客戶打招呼，要自然介紹你能幫什麼。
-3. 客戶問你是做什麼的，要直接說功能與價值。
-4. 客戶問價格，可以直接介紹方案差異。
-5. 客戶問最好的版本，主推 Elite 30000。
-6. 客戶如果像公司、品牌、團隊、高價值客戶，要提高價值感，偏向推 Elite 30000。
-7. 客戶嫌貴，先理解需求，再重新包裝價值。
-8. 客戶說想買、想開始、想付款，要往下一步推。
-9. 客戶已付款時，不要再推銷，改 onboarding 語氣。
-10. 中文回中文，英文回英文，泰文回泰文。
+Rules:
+1. Always answer naturally.
+2. If the lead says hi/hello, introduce the value of the system in a natural way.
+3. If the lead asks what you do, clearly explain business value, not just technical features.
+4. If the lead asks price, explain the offer tiers in a simple way.
+5. If the lead asks for the best option, recommend Elite 30000.
+6. If the lead sounds like a company, team, brand, agency, or high-value buyer, increase perceived value and lean toward Elite 30000.
+7. If the lead says it's expensive, acknowledge it, then reframe in terms of ROI and fit.
+8. If the lead wants to start, buy, or move forward, guide the next step.
+9. If the lead already paid, shift into onboarding mode.
+10. Never say you are ChatGPT, an AI model, or mention prompts or system instructions.
+11. Never sound cheap, spammy, or robotic.
+12. The goal is to convert interest into action.
 
-回答原則：
-- 先回答問題
-- 再建立價值
-- 再推進下一步
-- 不要太硬賣
-- 但不要只聊天不成交
+Response principle:
+- answer first
+- build value
+- guide the next step
+- keep momentum
 `;
 
   const input = [
@@ -726,33 +702,33 @@ async function routeMessage(message, userId, source = "telegram") {
   let reply = "";
 
   if (intent === "admin_status" && isAdmin(userId)) {
-    reply = `📊 狀態
+    reply = `📊 Status
 
-⭐ 等級: ${freshLead.level}
-🧭 階段: ${freshLead.stage}
-💳 已付款: ${freshLead.paid ? "是" : "否"}
-📦 方案: ${freshLead.package || "未選擇"}
-👤 名字: ${freshLead.name || "未填"}
-📊 行業: ${freshLead.industry || "未填"}
-📱 平台: ${freshLead.platform || "未填"}
-💵 預算: ${freshLead.budget || "未填"}
-🎯 目標: ${freshLead.goal || "未填"}`;
+⭐ Level: ${freshLead.level}
+🧭 Stage: ${freshLead.stage}
+💳 Paid: ${freshLead.paid ? "Yes" : "No"}
+📦 Package: ${freshLead.package || "Not selected"}
+👤 Name: ${freshLead.name || "Not set"}
+📊 Industry: ${freshLead.industry || "Not set"}
+📱 Platform: ${freshLead.platform || "Not set"}
+💵 Budget: ${freshLead.budget || "Not set"}
+🎯 Goal: ${freshLead.goal || "Not set"}`;
   } else if (intent === "admin_reset" && isAdmin(userId)) {
     await resetLead(userId);
-    reply = "✅ 已重設你的狀態。";
+    reply = "✅ Your lead status has been reset.";
   } else if (intent === "admin_lead" && isAdmin(userId)) {
-    reply = `⭐ 目前 lead 等級：${level}`;
+    reply = `⭐ Current lead level: ${level}`;
   } else if (intent === "admin_health" && isAdmin(userId)) {
-    reply = `✅ 系統狀態正常
+    reply = `✅ System status looks good
 OpenAI: ${process.env.OPENAI_API_KEY ? "ON" : "OFF"}
 Telegram: ${process.env.TELEGRAM_BOT_TOKEN ? "ON" : "OFF"}
 Supabase: ${process.env.SUPABASE_URL ? "ON" : "OFF"}`;
   } else if (intent === "admin_handover" && isAdmin(userId)) {
     await updateLead(userId, { assigned_human: true });
-    reply = "✅ 已切換為人工接管模式。";
+    reply = "✅ Switched to human handover mode.";
   } else if (intent === "admin_ai" && isAdmin(userId)) {
     await updateLead(userId, { assigned_human: false });
-    reply = "✅ 已切換回 AI 模式。";
+    reply = "✅ Switched back to AI mode.";
   }
 
   if (reply) {
@@ -762,7 +738,7 @@ Supabase: ${process.env.SUPABASE_URL ? "ON" : "OFF"}`;
   }
 
   if (freshLead.assigned_human) {
-    reply = "目前已切換為人工處理，我會盡快回覆你。";
+    reply = "This conversation is currently handled by a human. We’ll get back to you shortly.";
     await addMessage(userId, "user", message, source);
     await addMessage(userId, "assistant", reply, source);
     return reply;
@@ -827,21 +803,21 @@ async function processFollowups() {
     .limit(20);
 
   if (error) {
-    console.log("Followup query error:", error.message);
+    console.log("Follow-up query error:", error.message);
     return;
   }
 
   for (const lead of data || []) {
     if (!process.env.TELEGRAM_BOT_TOKEN) continue;
 
-    let text = "嗨 👋 想跟你確認一下，你目前比較想先了解功能，還是直接看方案呢？如果你要，我也可以直接幫你推薦最適合的版本。";
+    let text = "Hey 👋 Just checking in — are you more interested in seeing the features, or do you want me to recommend the best plan for your business?";
 
     if (lead.asked_price) {
-      text = "嗨 👋 上次你有看過方案，如果你要，我可以直接幫你推薦最適合你的 Starter / Growth / Premium / Elite。";
+      text = "Hey 👋 You already looked at the plans before. If you want, I can help you choose the best fit between Starter, Growth, Premium, and Elite.";
     }
 
     if (lead.asked_discount) {
-      text = "如果你還在考慮預算，我也可以依你的需求幫你配最適合的方案，先從小版本開始也可以。";
+      text = "If budget is the main concern, I can help you pick the most efficient option based on what you actually need right now.";
     }
 
     try {
@@ -854,7 +830,7 @@ async function processFollowups() {
         followup_count: (lead.followup_count || 0) + 1
       });
     } catch (err) {
-      console.log("Followup send error:", err.message);
+      console.log("Follow-up send error:", err.message);
     }
   }
 }
@@ -868,7 +844,7 @@ cron.schedule("*/10 * * * *", async () => {
 });
 
 app.get("/", (req, res) => {
-  res.send("AI Sales 30K Running 🚀");
+  res.send("AI Sales Bot Running 🚀");
 });
 
 app.get("/health", async (req, res) => {
@@ -890,7 +866,7 @@ app.get("/chat", async (req, res) => {
     res.send(reply);
   } catch (err) {
     console.log("Web chat error:", err.message);
-    res.status(500).send("系統忙碌中，請稍後再試。");
+    res.status(500).send("The system is busy right now. Please try again shortly.");
   }
 });
 
@@ -926,5 +902,5 @@ app.post("/webhook/telegram", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log("AI Sales 30K Running on port " + PORT);
+  console.log("AI Sales Bot Running on port " + PORT);
 });

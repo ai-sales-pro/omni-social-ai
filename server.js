@@ -1,13 +1,19 @@
 function buildReply(message = "", platform = "Telegram") {
   const text = String(message || "").toLowerCase().trim();
 
+  const checkoutLink =
+    process.env.CHECKOUT_LINK || "https://your-checkout-link.com";
+
   if (!text) {
     return `Hi! 👋
 
 Thanks for reaching out.
-I'm here to help you choose the best AI auto-reply setup for your business.
+I can help you choose the best AI auto-reply sales setup for your business.
 
-What kind of business are you running?`;
+Please send:
+1. Your business type
+2. Your target customers
+3. Your main goal`;
   }
 
   if (
@@ -18,15 +24,70 @@ What kind of business are you running?`;
     text.includes("多少") ||
     text.includes("價錢")
   ) {
-    return `Great question 💰
+    return `Absolutely — here are our 3 packages 💼
 
-Our setup depends on your business needs:
+1. Starter — $99
+• basic auto-reply setup
+• simple lead reply flow
 
-• Starter — basic auto-reply setup
-• Growth — smarter sales flow + better conversion
-• Premium — full AI closing system
+2. Growth — $299
+• smarter sales replies
+• lead qualification
+• better conversion flow
 
-Tell me your business type and main goal, and I’ll recommend the best option for you.`;
+3. Premium — $699
+• full AI closing system
+• advanced reply flow
+• custom business setup
+
+Reply with:
+• Starter
+• Growth
+• Premium
+
+and I’ll guide you to the next step.`;
+  }
+
+  if (text.includes("starter")) {
+    return `Great choice — Starter ✅
+
+Starter is best if you want a simple auto-reply system to save time and reply faster.
+
+To continue, please send:
+1. Your business type
+2. Your target customers
+3. Your preferred platform (${platform})
+
+If you're ready to order now, use this secure checkout link:
+${checkoutLink}`;
+  }
+
+  if (text.includes("growth")) {
+    return `Great choice — Growth ✅
+
+Growth is ideal if you want stronger lead qualification and better conversion replies.
+
+To continue, please send:
+1. Your business type
+2. Your target customers
+3. Your preferred platform (${platform})
+
+If you're ready to order now, use this secure checkout link:
+${checkoutLink}`;
+  }
+
+  if (text.includes("premium")) {
+    return `Excellent choice — Premium 🚀
+
+Premium is for businesses that want a full AI closing system with a more advanced setup.
+
+To continue, please send:
+1. Your business type
+2. Your target customers
+3. Your preferred platform (${platform})
+
+If you're ready to order now, use this secure checkout link:
+${checkoutLink}`;
   }
 
   if (
@@ -37,38 +98,46 @@ Tell me your business type and main goal, and I’ll recommend the best option f
     text.includes("了解") ||
     text.includes("想知道")
   ) {
-    return `Awesome — happy to help 🔥
+    return `Awesome — here’s how this works 🔥
 
 This system can:
 • reply instantly
 • answer customer questions
-• guide leads toward purchase
-• save you time and increase conversions
+• qualify leads
+• guide customers toward buying
 
-Reply with:
+To recommend the best package, please send:
 1. Your business type
 2. Your target customers
 3. Your main goal
+4. Your platform (Telegram / IG / WhatsApp)
 
-and I’ll suggest the best setup for you.`;
+If you already want to move forward now, here is the checkout link:
+${checkoutLink}`;
   }
 
   if (
     text.includes("buy") ||
+    text.includes("buy now") ||
     text.includes("order") ||
     text.includes("start") ||
     text.includes("ready") ||
-    text.includes("要") ||
-    text.includes("開始")
+    text.includes("checkout") ||
+    text.includes("payment") ||
+    text.includes("pay") ||
+    text.includes("付款") ||
+    text.includes("下單")
   ) {
     return `Perfect — you're ready to move forward ✅
 
-Please send:
-1. Your business type
-2. Your preferred platform (${platform})
-3. Your target customers
+Before checkout, please send:
+1. Your name
+2. Your business type
+3. Your preferred platform
+4. Your package choice (Starter / Growth / Premium)
 
-Once I have that, I’ll recommend the right setup and next step for you immediately.`;
+Then complete your order here:
+${checkoutLink}`;
   }
 
   if (
@@ -82,44 +151,34 @@ Once I have that, I’ll recommend the right setup and next step for you immedia
     text.includes("餐廳") ||
     text.includes("電商")
   ) {
-    return `That sounds like a great fit for this system 🚀
+    return `That sounds like a strong fit for this AI system 🚀
 
-For your business, I’d recommend a flow that:
+For your business, I recommend a setup that:
 • replies fast
 • builds trust
-• qualifies the customer
-• moves them toward booking or payment
+• qualifies customers
+• guides them toward booking or payment
 
-If you want, I can recommend the best package for your business right now.`;
-  }
+Now send me:
+1. Your target customers
+2. Your main goal
+3. Your platform
+4. Your preferred package
 
-  if (
-    text.includes("book") ||
-    text.includes("appointment") ||
-    text.includes("schedule") ||
-    text.includes("call") ||
-    text.includes("預約")
-  ) {
-    return `Great — the fastest next step is to book a quick call with us.
-
-Send me your preferred time, and I’ll help you move forward quickly.`;
-  }
-
-  if (
-    text.includes("pay") ||
-    text.includes("payment") ||
-    text.includes("checkout") ||
-    text.includes("付款")
-  ) {
-    return `Perfect ✅
-
-You're ready for the next step.
-Please send your name and preferred package, and I’ll guide you through the payment process.`;
+If you prefer to start immediately, use this checkout link:
+${checkoutLink}`;
   }
 
   return `Thanks for your message 👋
 
-This AI auto-reply sales system helps businesses reply faster and close more customers automatically.
+I can help you choose the best AI auto-reply sales setup.
 
-Tell me your business type and goal, and I’ll guide you to the best option 🚀`;
+Please send:
+1. Your business type
+2. Your target customers
+3. Your main goal
+4. Your preferred platform
+
+If you're ready to order now, here is the checkout link:
+${checkoutLink}`;
 }

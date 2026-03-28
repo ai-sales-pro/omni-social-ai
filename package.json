@@ -1,15 +1,17 @@
 {
-  "name": "ai-sales-system",
-  "version": "1.0.0",
-  "description": "Auto sales bot",
+  "name": "ai-sales-30k",
+  "version": "3.0.0",
+  "description": "30K AI sales system with database",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
+    "@supabase/supabase-js": "^2.50.0",
     "axios": "^1.6.0",
     "body-parser": "^1.20.2",
-    "openai": "^4.0.0"
+    "express": "^4.18.2",
+    "node-cron": "^3.0.3",
+    "openai": "^4.104.0"
   }
 }

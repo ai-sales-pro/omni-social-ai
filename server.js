@@ -10,15 +10,6 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY
-);
-
 function normalize(text = "") {
   return String(text).trim().toLowerCase();
 }
@@ -147,6 +138,25 @@ function detectIntent(text = "") {
   return "chat";
 }
 
+// lazy clients
+function getOpenAI() {
+  if (!process.env.OPENAI_API_KEY) return null;
+  return new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+  });
+}
+
+function getSupabase() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
+
+  if (!url || !key) {
+    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY/SUPABASE_KEY");
+  }
+
+  return createClient(url, key);
+}
+
 async function sendTelegramMessage(token, chatId, text) {
   if (!token || !chatId || !text) return;
 
@@ -182,6 +192,8 @@ async function sendNotify(text) {
 }
 
 async function getLead(userId) {
+  const supabase = getSupabase();
+
   const { data, error } = await supabase
     .from("leads")
     .select("*")
@@ -227,6 +239,8 @@ async function getLead(userId) {
 }
 
 async function updateLead(userId, patch) {
+  const supabase = getSupabase();
+
   const payload = {
     ...patch,
     updated_at: new Date().toISOString()
@@ -241,6 +255,8 @@ async function updateLead(userId, patch) {
 }
 
 async function addMessage(userId, role, content, source = "telegram") {
+  const supabase = getSupabase();
+
   const { error } = await supabase.from("messages").insert({
     user_id: String(userId),
     role,
@@ -252,6 +268,8 @@ async function addMessage(userId, role, content, source = "telegram") {
 }
 
 async function getRecentMessages(userId, limit = 12) {
+  const supabase = getSupabase();
+
   const { data, error } = await supabase
     .from("messages")
     .select("role, content, created_at")
@@ -264,6 +282,8 @@ async function getRecentMessages(userId, limit = 12) {
 }
 
 async function createOrderFromLead(lead) {
+  const supabase = getSupabase();
+
   const { error } = await supabase.from("orders").insert({
     user_id: lead.user_id,
     package: lead.package || "",
@@ -598,7 +618,8 @@ And if your goal is to build a serious revenue-driving system, Elite 30000 is th
 }
 
 async function askAI(message, lead) {
-  if (!process.env.OPENAI_API_KEY) return null;
+  const openai = getOpenAI();
+  if (!openai) return null;
 
   const recent = await getRecentMessages(lead.user_id, 12);
   const { starter, growth, premium, elite } = getLinks();
@@ -820,44 +841,50 @@ Supabase: ${process.env.SUPABASE_URL ? "ON" : "OFF"}`;
 }
 
 async function processFollowups() {
-  const now = new Date().toISOString();
-  const { data, error } = await supabase
-    .from("leads")
-    .select("*")
-    .lte("next_followup_at", now)
-    .eq("paid", false)
-    .limit(20);
+  try {
+    const supabase = getSupabase();
+    const now = new Date().toISOString();
 
-  if (error) {
-    console.log("Follow-up query error:", error.message);
-    return;
-  }
+    const { data, error } = await supabase
+      .from("leads")
+      .select("*")
+      .lte("next_followup_at", now)
+      .eq("paid", false)
+      .limit(20);
 
-  for (const lead of data || []) {
-    if (!process.env.TELEGRAM_BOT_TOKEN) continue;
-
-    let text = "Hey 👋 Just checking in — are you more interested in seeing the features, or do you want me to recommend the best plan for your business?";
-
-    if (lead.asked_price) {
-      text = "Hey 👋 You already looked at the plans before. If you want, I can help you choose the best fit between Starter, Growth, Premium, and Elite.";
+    if (error) {
+      console.log("Follow-up query error:", error.message);
+      return;
     }
 
-    if (lead.asked_discount) {
-      text = "If budget is the main concern, I can help you pick the most efficient option based on what you actually need right now.";
-    }
+    for (const lead of data || []) {
+      if (!process.env.TELEGRAM_BOT_TOKEN) continue;
 
-    try {
-      await sendTelegramMessage(process.env.TELEGRAM_BOT_TOKEN, lead.user_id, text);
-      await addMessage(lead.user_id, "assistant", text, "followup");
+      let text = "Hey 👋 Just checking in — are you more interested in seeing the features, or do you want me to recommend the best plan for your business?";
 
-      await updateLead(lead.user_id, {
-        last_followup_at: new Date().toISOString(),
-        next_followup_at: null,
-        followup_count: (lead.followup_count || 0) + 1
-      });
-    } catch (err) {
-      console.log("Follow-up send error:", err.message);
+      if (lead.asked_price) {
+        text = "Hey 👋 You already looked at the plans before. If you want, I can help you choose the best fit between Starter, Growth, Premium, and Elite.";
+      }
+
+      if (lead.asked_discount) {
+        text = "If budget is the main concern, I can help you pick the most efficient option based on what you actually need right now.";
+      }
+
+      try {
+        await sendTelegramMessage(process.env.TELEGRAM_BOT_TOKEN, lead.user_id, text);
+        await addMessage(lead.user_id, "assistant", text, "followup");
+
+        await updateLead(lead.user_id, {
+          last_followup_at: new Date().toISOString(),
+          next_followup_at: null,
+          followup_count: (lead.followup_count || 0) + 1
+        });
+      } catch (err) {
+        console.log("Follow-up send error:", err.message);
+      }
     }
+  } catch (err) {
+    console.log("processFollowups error:", err.message);
   }
 }
 
@@ -933,6 +960,14 @@ app.post("/webhook/telegram", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// startup logs
+console.log("Starting AI Sales Bot...");
+console.log("PORT exists:", !!process.env.PORT);
+console.log("OPENAI key exists:", !!process.env.OPENAI_API_KEY);
+console.log("TELEGRAM token exists:", !!process.env.TELEGRAM_BOT_TOKEN);
+console.log("SUPABASE URL exists:", !!process.env.SUPABASE_URL);
+console.log("SUPABASE key exists:", !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY));
+
+app.listen(PORT, "0.0.0.0", () => {
   console.log("AI Sales Bot Running on port " + PORT);
 });

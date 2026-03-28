@@ -13,7 +13,7 @@ h1 {
   margin-bottom: 8px;
 }
 .sub {
-  opacity: 0.8;
+  opacity: 0.85;
   margin-bottom: 20px;
 }
 .card {
@@ -27,7 +27,7 @@ label {
   margin: 10px 0 8px;
   font-weight: 700;
 }
-textarea, select {
+textarea {
   width: 100%;
   box-sizing: border-box;
   padding: 12px;
@@ -52,4 +52,4 @@ code {
   background: #0f1115;
   padding: 2px 6px;
   border-radius: 6px;
-}
+}\n

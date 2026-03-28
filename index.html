@@ -3,40 +3,32 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Full Auto Sales System</title>
+  <title>Telegram Sales Closer Upgrade</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="wrap">
-    <h1>🤖 Full Auto Sales System</h1>
-    <p class="sub">Telegram-ready • Instagram / WhatsApp webhook-ready • English sales replies</p>
+    <h1>🤖 Telegram Sales Closer Upgrade</h1>
+    <p class="sub">Smarter sales replies • booking prompt • payment prompt • Telegram-ready</p>
 
     <div class="card">
-      <label>Platform</label>
-      <select id="platform">
-        <option>Instagram</option>
-        <option>WhatsApp</option>
-        <option>Telegram</option>
-        <option>Fiverr</option>
-      </select>
-
       <label>Incoming customer message</label>
       <textarea id="message" rows="6" placeholder="Hi, how much is this?"></textarea>
 
-      <button onclick="generateReply()">Generate Auto Sales Reply</button>
+      <button onclick="generateReply()">Generate Closing Reply</button>
 
       <label>Reply</label>
-      <textarea id="output" rows="10" readonly></textarea>
+      <textarea id="output" rows="11" readonly></textarea>
     </div>
 
     <div class="card">
-      <h2>Webhook URLs</h2>
-      <p><b>Telegram:</b> <code>/webhook/telegram</code></p>
-      <p><b>Meta verify + receive:</b> <code>/webhook/meta</code></p>
-      <p><b>Health check:</b> <code>/health</code></p>
+      <h2>Telegram webhook route</h2>
+      <p><code>/webhook/telegram</code></p>
+      <h2>Health check</h2>
+      <p><code>/health</code></p>
     </div>
   </div>
 
   <script src="script.js"></script>
 </body>
-</html>
+</html>\n

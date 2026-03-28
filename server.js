@@ -1,5 +1,4 @@
 const express = require("express");
-const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -8,35 +7,86 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(__dirname));
 
-function buildSalesReply(message = "", platform = "general") {
-  const text = String(message).toLowerCase();
+function buildReply(message = "", platform = "Telegram") {
+  const text = String(message || "").toLowerCase().trim();
 
-  if (text.includes("price") || text.includes("how much") || text.includes("cost")) {
-    return `Thanks for your message! 👋
+  if (!text) {
+    return `Hi! 👋
 
-This is a premium solution designed to help you get results faster.
+Thanks for reaching out.
+This is a premium AI auto-reply sales system designed to help businesses close more customers automatically.
 
-Pricing depends on the package and features you need. If you want, I can recommend the best option for your business and get you started today. 🚀`;
+Tell me what you need and I’ll guide you to the best option for your business. 🚀`;
   }
 
-  if (text.includes("interested") || text.includes("info") || text.includes("details")) {
-    return `Awesome — thanks for reaching out! 🔥
+  if (text.includes("price") || text.includes("how much") || text.includes("cost") || text.includes("pricing")) {
+    return `Absolutely — here’s a quick overview. 💼
 
-This system helps businesses save time, reply faster, and turn more conversations into paying customers.
+Our pricing depends on the level of setup and automation you need:
 
-Tell me your goal and I’ll guide you to the best package for you.`;
+• Starter: basic setup
+• Growth: smarter automation + better conversion flow
+• Premium: full auto-reply sales system
+
+Tell me your business type and goal, and I’ll recommend the best package for you.`;
   }
 
-  if (text.includes("buy") || text.includes("order") || text.includes("start") || text.includes("ready")) {
-    return `Perfect! ✅
+  if (text.includes("interested") || text.includes("details") || text.includes("info") || text.includes("tell me more")) {
+    return `Awesome — happy to help. 🔥
 
-You're ready to move forward.
+This system is built to:
+• reply instantly
+• handle customer questions
+• guide leads toward purchase
+• save you time while increasing conversions
+
+Reply with:
+1. Your business type
+2. Your target customers
+3. Your main goal
+
+and I’ll recommend the best setup for you.`;
+  }
+
+  if (text.includes("buy") || text.includes("start") || text.includes("ready") || text.includes("order")) {
+    return `Perfect — you’re ready to move forward. ✅
+
 Please send:
 1. Your business type
 2. Your preferred platform (${platform})
 3. Your target customers
 
-Once I have that, I can recommend the best setup and help you get started immediately.`;
+Once I have that, I’ll recommend the best setup and help you get started immediately.`;
+  }
+
+  if (text.includes("restaurant") || text.includes("agency") || text.includes("coach") || text.includes("clinic") || text.includes("shop") || text.includes("ecommerce")) {
+    return `That sounds like a great fit for this system. 🚀
+
+For your business, I’d recommend a sales flow that:
+• answers fast
+• builds trust
+• qualifies the customer
+• moves them toward booking or payment
+
+If you want, I can outline the best package for your business right now.`;
+  }
+
+  if (text.includes("book") || text.includes("appointment") || text.includes("schedule") || text.includes("call")) {
+    const booking = process.env.BOOKING_LINK || "your-booking-link";
+    return `Great — the fastest next step is to book a quick call here:
+
+${booking}
+
+Once booked, we can discuss your goals and recommend the best setup for you.`;
+  }
+
+  if (text.includes("pay") || text.includes("payment") || text.includes("checkout")) {
+    const checkout = process.env.CHECKOUT_LINK || "your-checkout-link";
+    return `Perfect — you can move forward here:
+
+${checkout}
+
+Once payment is completed, we can begin the setup right away. ✅`;
   }
 
   return `Hi! 👋
@@ -48,25 +98,24 @@ Tell me what you need, and I’ll guide you to the best option for your business
 }
 
 app.get("/health", (req, res) => {
-  res.json({ ok: true, service: "full-auto-sales-v2" });
+  res.json({ ok: true, service: "telegram-sales-closer-upgrade" });
 });
 
 app.post("/api/generate-reply", (req, res) => {
   const { message, platform } = req.body || {};
-  const reply = buildSalesReply(message, platform);
+  const reply = buildReply(message, platform || "Telegram");
   res.json({ ok: true, reply });
 });
 
-// Telegram webhook example
 app.post("/webhook/telegram", async (req, res) => {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const body = req.body || {};
   const chatId = body?.message?.chat?.id;
   const messageText = body?.message?.text || "";
-  const reply = buildSalesReply(messageText, "Telegram");
+  const reply = buildReply(messageText, "Telegram");
 
   if (!token || !chatId) {
-    return res.json({ ok: true, note: "Webhook received, but TELEGRAM_BOT_TOKEN or chat id is missing.", preview_reply: reply });
+    return res.json({ ok: true, note: "Missing TELEGRAM_BOT_TOKEN or chat ID.", preview_reply: reply });
   }
 
   try {
@@ -83,29 +132,6 @@ app.post("/webhook/telegram", async (req, res) => {
   }
 });
 
-// Meta webhook verification
-app.get("/webhook/meta", (req, res) => {
-  const verifyToken = process.env.META_VERIFY_TOKEN || "my_verify_token";
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === verifyToken) {
-    return res.status(200).send(challenge);
-  }
-  return res.sendStatus(403);
-});
-
-// Instagram / WhatsApp incoming webhook preview
-app.post("/webhook/meta", (req, res) => {
-  const body = req.body || {};
-  res.json({
-    ok: true,
-    note: "Meta webhook received. To make Instagram / WhatsApp fully auto-reply, add your Meta tokens and outbound messaging logic.",
-    received: body
-  });
-});
-
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-});
+});\n

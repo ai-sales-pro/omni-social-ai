@@ -1,16 +1,21 @@
-# Full Auto Sales System V2
+# Telegram Sales Closer Upgrade
 
-This version is upgraded for:
-- Telegram auto reply (ready to connect)
-- Instagram webhook-ready structure
-- WhatsApp webhook-ready structure
-- English sales auto reply generator
+This version upgrades your Telegram bot with:
+- better sales replies
+- qualification prompts
+- booking link prompts
+- payment / checkout prompts
 
-## Deploy on Render
-- Build Command: npm install
-- Start Command: node server.js
+## Deploy
+Build Command:
+npm install
 
-## Important
-Telegram can be connected directly with a bot token.
-Instagram and WhatsApp need official Meta app setup, tokens, webhook verification, and outbound messaging setup.
-Fiverr does not provide a general-purpose external bot webhook in the same way, so use its built-in auto reply / quick responses separately.
+Start Command:
+node server.js
+
+## Required environment variable
+TELEGRAM_BOT_TOKEN=your_token
+
+## Optional
+BOOKING_LINK=https://your-booking-link.com
+CHECKOUT_LINK=https://your-checkout-link.com\n

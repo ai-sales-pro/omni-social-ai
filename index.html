@@ -1,24 +1,42 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>AI Sales Closer</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Full Auto Sales System</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div class="wrap">
+    <h1>🤖 Full Auto Sales System</h1>
+    <p class="sub">Telegram-ready • Instagram / WhatsApp webhook-ready • English sales replies</p>
 
-<div class="container">
-<h1>🤖 AI Sales Closer</h1>
+    <div class="card">
+      <label>Platform</label>
+      <select id="platform">
+        <option>Instagram</option>
+        <option>WhatsApp</option>
+        <option>Telegram</option>
+        <option>Fiverr</option>
+      </select>
 
-<input id="customer" placeholder="Customer message">
-<input id="product" placeholder="Your product/service">
-<input id="price" placeholder="Price">
+      <label>Incoming customer message</label>
+      <textarea id="message" rows="6" placeholder="Hi, how much is this?"></textarea>
 
-<button onclick="generate()">Generate Reply</button>
+      <button onclick="generateReply()">Generate Auto Sales Reply</button>
 
-<div class="result" id="output"></div>
-</div>
+      <label>Reply</label>
+      <textarea id="output" rows="10" readonly></textarea>
+    </div>
 
-<script src="script.js"></script>
+    <div class="card">
+      <h2>Webhook URLs</h2>
+      <p><b>Telegram:</b> <code>/webhook/telegram</code></p>
+      <p><b>Meta verify + receive:</b> <code>/webhook/meta</code></p>
+      <p><b>Health check:</b> <code>/health</code></p>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
 </body>
 </html>

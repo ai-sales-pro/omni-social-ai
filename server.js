@@ -1,8 +1,8 @@
-const express = require("express");
-const OpenAI = require("openai").default;
-const axios = require("axios");
-const cron = require("node-cron");
-const { createClient } = require("@supabase/supabase-js");
+import express from "express";
+import axios from "axios";
+import cron from "node-cron";
+import { createClient } from "@supabase/supabase-js";
+import { getAIReply } from "./ai.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -49,7 +49,6 @@ function detectLeadLevel(text = "") {
     t.includes("brand") ||
     t.includes("team") ||
     t.includes("clients") ||
-    t.includes("many customers") ||
     t.includes("enterprise") ||
     t.includes("custom") ||
     t.includes("high-end") ||
@@ -138,14 +137,6 @@ function detectIntent(text = "") {
   return "chat";
 }
 
-// lazy clients
-function getOpenAI() {
-  if (!process.env.OPENAI_API_KEY) return null;
-  return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-  });
-}
-
 function getSupabase() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
@@ -160,22 +151,15 @@ function getSupabase() {
 async function sendTelegramMessage(token, chatId, text) {
   if (!token || !chatId || !text) return;
 
-  try {
-    const result = await axios.post(
-      `https://api.telegram.org/bot${token}/sendMessage`,
-      {
-        chat_id: chatId,
-        text: String(text)
-      }
-    );
-    return result.data;
-  } catch (err) {
-    console.log("sendTelegramMessage FULL ERROR:", {
-      message: err.message,
-      response: err.response?.data
-    });
-    throw err;
-  }
+  const result = await axios.post(
+    `https://api.telegram.org/bot${token}/sendMessage`,
+    {
+      chat_id: chatId,
+      text: String(text)
+    }
+  );
+
+  return result.data;
 }
 
 async function sendNotify(text) {
@@ -326,15 +310,6 @@ async function resetLead(userId) {
   await updateLead(userId, reset);
 }
 
-function withTimeout(promise, ms = 15000) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("timeout")), ms)
-    )
-  ]);
-}
-
 async function buildSalesReply(message, lead) {
   const text = normalize(message);
   const { starter, growth, premium, elite } = getLinks();
@@ -413,13 +388,6 @@ I’ll help you with the next step from here. 🚀`;
 
   if (text === "hi" || text === "hello" || text === "hey") {
     return `Hey 👋 I help businesses automate replies, qualify leads, and turn more conversations into sales. Are you looking to improve response speed, conversion rate, or both?`;
-  }
-
-  if (text === "99") {
-    return `Starter is $99.
-
-If you want the full pricing breakdown, just type:
-price`;
   }
 
   if (
@@ -617,113 +585,6 @@ And if your goal is to build a serious revenue-driving system, Elite 30000 is th
   return `Hey 👋 This is an AI sales system built to help you automate replies and close more conversations. If you want, I can show you the pricing or help you figure out which setup fits you best.`;
 }
 
-async function askAI(message, lead) {
-  const openai = getOpenAI();
-  if (!openai) return null;
-
-  const recent = await getRecentMessages(lead.user_id, 12);
-  const { starter, growth, premium, elite } = getLinks();
-
-  const developerInstruction = `
-You are a premium AI sales closer for the US market.
-
-Your job is not just to answer questions. Your job is to talk like a smart, confident sales consultant, build trust, understand the lead, and move the conversation toward conversion.
-
-What you sell:
-- AI auto-reply systems
-- Telegram / Instagram / WhatsApp automation
-- sales automation
-- lead qualification systems
-- private-message conversion systems
-- custom AI sales workflows
-
-Your tone:
-- natural
-- professional
-- persuasive
-- concise but valuable
-- confident, not pushy
-- like a real US sales consultant
-- never robotic
-- usually 2 to 5 sentences
-- answer the question first, then guide the next step
-
-Plans:
-Starter — $99 — ${starter}
-Growth — $299 — ${growth}
-Premium — $699 — ${premium}
-Elite 30000 — custom business-grade AI sales system — ${elite}
-
-Lead profile:
-- language: ${lead.language}
-- level: ${lead.level}
-- stage: ${lead.stage}
-- selected package: ${lead.package || "none"}
-- paid: ${lead.paid ? "yes" : "no"}
-- industry: ${lead.industry || ""}
-- platform: ${lead.platform || ""}
-- budget: ${lead.budget || ""}
-- goal: ${lead.goal || ""}
-- asked price before: ${lead.asked_price ? "yes" : "no"}
-- asked discount before: ${lead.asked_discount ? "yes" : "no"}
-
-Rules:
-1. Always answer naturally.
-2. If the lead says hi/hello, introduce the value of the system in a natural way.
-3. If the lead asks what you do, clearly explain business value, not just technical features.
-4. If the lead asks price, explain the offer tiers in a simple way.
-5. If the lead asks for the best option, recommend Elite 30000.
-6. If the lead sounds like a company, team, brand, agency, or high-value buyer, increase perceived value and lean toward Elite 30000.
-7. If the lead says it's expensive, acknowledge it, then reframe in terms of ROI and fit.
-8. If the lead wants to start, buy, or move forward, guide the next step.
-9. If the lead already paid, shift into onboarding mode.
-10. Never say you are ChatGPT, an AI model, or mention prompts or system instructions.
-11. Never sound cheap, spammy, or robotic.
-12. Keep replies clear and conversion-focused.
-
-Response principle:
-- answer first
-- build value
-- guide the next step
-- keep momentum
-`;
-
-  const input = [
-    {
-      role: "developer",
-      content: [{ type: "text", text: developerInstruction }]
-    },
-    ...recent.map((item) => ({
-      role: item.role,
-      content: [{ type: "text", text: item.content }]
-    })),
-    {
-      role: "user",
-      content: [{ type: "text", text: String(message || "") }]
-    }
-  ];
-
-  try {
-    const response = await withTimeout(
-      openai.responses.create({
-        model: "gpt-4o-mini",
-        input
-      }),
-      15000
-    );
-
-    const output = response.output_text?.trim();
-    console.log("AI OUTPUT:", output);
-    return output && output.length > 0 ? output : null;
-  } catch (err) {
-    console.log("Responses API error FULL:", {
-      message: err.message,
-      response: err.response?.data
-    });
-    return null;
-  }
-}
-
 async function routeMessage(message, userId, source = "telegram") {
   const lead = await getLead(userId);
   const intent = detectIntent(message);
@@ -739,7 +600,6 @@ async function routeMessage(message, userId, source = "telegram") {
   });
 
   const freshLead = await getLead(userId);
-
   let reply = "";
 
   if (intent === "admin_status" && isAdmin(userId)) {
@@ -761,7 +621,6 @@ async function routeMessage(message, userId, source = "telegram") {
     reply = `⭐ Current lead level: ${level}`;
   } else if (intent === "admin_health" && isAdmin(userId)) {
     reply = `✅ System status looks good
-OpenAI: ${process.env.OPENAI_API_KEY ? "ON" : "OFF"}
 Telegram: ${process.env.TELEGRAM_BOT_TOKEN ? "ON" : "OFF"}
 Supabase: ${process.env.SUPABASE_URL ? "ON" : "OFF"}`;
   } else if (intent === "admin_handover" && isAdmin(userId)) {
@@ -778,65 +637,9 @@ Supabase: ${process.env.SUPABASE_URL ? "ON" : "OFF"}`;
     return reply;
   }
 
-  if (freshLead.assigned_human) {
-    reply = "This conversation is currently handled by a human. We’ll get back to you shortly.";
-    await addMessage(userId, "user", message, source);
-    await addMessage(userId, "assistant", reply, source);
-    return reply;
-  }
-
-  if (freshLead.notes || intent === "paid") {
-    reply = await buildSalesReply(message, freshLead);
-    await addMessage(userId, "user", message, source);
-    await addMessage(userId, "assistant", reply, source);
-    return reply;
-  }
-
-  let aiReply = null;
-  try {
-    aiReply = await askAI(message, freshLead);
-  } catch (err) {
-    console.log("AI route error:", err.message);
-  }
-
-  if (aiReply && aiReply.trim()) {
-    reply = aiReply.trim();
-
-    if (
-      intent === "pricing" ||
-      intent === "package" ||
-      intent === "buy" ||
-      intent === "objection" ||
-      intent === "support"
-    ) {
-      await updateLead(userId, {
-        stage:
-          intent === "buy"
-            ? "buying"
-            : intent === "pricing"
-              ? "pricing"
-              : freshLead.stage,
-        asked_price: intent === "pricing" ? true : freshLead.asked_price,
-        asked_discount: intent === "objection" ? true : freshLead.asked_discount
-      });
-    }
-
-    await addMessage(userId, "user", message, source);
-    await addMessage(userId, "assistant", reply, source);
-    return reply;
-  }
-
   reply = await buildSalesReply(message, freshLead);
-
-  if (!reply || !reply.trim()) {
-    reply = "Hey 👋 Something went wrong on my side, but I’m still here. You can ask me about pricing, plans, or the best setup for your business.";
-  }
-
-  console.log("FINAL REPLY:", reply);
-
   await addMessage(userId, "user", message, source);
   await addMessage(userId, "assistant", reply, source);
-
   return reply;
 }
 
@@ -904,7 +707,6 @@ app.get("/health", async (req, res) => {
   res.json({
     ok: true,
     service: "ai-sales-bot",
-    hasOpenAI: !!process.env.OPENAI_API_KEY,
     hasTelegram: !!process.env.TELEGRAM_BOT_TOKEN,
     hasSupabaseUrl: !!process.env.SUPABASE_URL,
     hasSupabaseKey: !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY)
@@ -918,10 +720,7 @@ app.get("/chat", async (req, res) => {
     const reply = await routeMessage(message, userId, "web");
     res.send(reply);
   } catch (err) {
-    console.log("Web chat error FULL:", {
-      message: err.message,
-      response: err.response?.data
-    });
+    console.log("Web chat error:", err.message);
     res.status(500).send("The system is busy right now. Please try again shortly.");
   }
 });
@@ -952,18 +751,13 @@ app.post("/webhook/telegram", async (req, res) => {
 
     return res.json({ ok: true });
   } catch (err) {
-    console.log("Telegram webhook error FULL:", {
-      message: err.message,
-      response: err.response?.data
-    });
+    console.log("Telegram webhook error:", err.message);
     return res.json({ ok: true });
   }
 });
 
-// startup logs
 console.log("Starting AI Sales Bot...");
 console.log("PORT exists:", !!process.env.PORT);
-console.log("OPENAI key exists:", !!process.env.OPENAI_API_KEY);
 console.log("TELEGRAM token exists:", !!process.env.TELEGRAM_BOT_TOKEN);
 console.log("SUPABASE URL exists:", !!process.env.SUPABASE_URL);
 console.log("SUPABASE key exists:", !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY));

@@ -8,8 +8,6 @@ import crypto from "crypto";
   shouldOfferPayment,
   generatePlatformReply
 } from "./ai.js";
-
-import {
   supabase,
   saveCustomer,
   getCustomer,

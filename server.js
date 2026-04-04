@@ -1,9 +1,18 @@
 import express from "express";
 import axios from "axios";
-import dotenv from "dotenv";
 import cors from "cors";
 import Stripe from "stripe";
 import crypto from "crypto";
+
+if (process.env.NODE_ENV !== "production") {
+  try {
+    const dotenv = await import("dotenv");
+    dotenv.default.config();
+    console.log("✅ dotenv loaded");
+  } catch (err) {
+    console.log("⚠️ dotenv not loaded:", err.message);
+  }
+}
 
 import {
   analyzeCustomer,
@@ -30,12 +39,26 @@ import {
   updateFollowUp
 } from "./db.js";
 
-dotenv.config();
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+if (!process.env.STRIPE_SECRET_KEY) {
+  console.log("⚠️ Missing STRIPE_SECRET_KEY");
+}
+if (!process.env.TELEGRAM_BOT_TOKEN) {
+  console.log("⚠️ Missing TELEGRAM_BOT_TOKEN");
+}
+if (!process.env.SUPABASE_URL) {
+  console.log("⚠️ Missing SUPABASE_URL");
+}
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.log("⚠️ Missing SUPABASE_SERVICE_ROLE_KEY");
+}
+if (!process.env.OPENAI_API_KEY) {
+  console.log("⚠️ Missing OPENAI_API_KEY");
+}
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "sk_test_dummy");
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
 
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION || "v25.0";
@@ -46,7 +69,7 @@ const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || "";
 
 app.use(cors());
 
-const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN || ""}`;
 
 /* =============================
    工具

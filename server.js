@@ -15,7 +15,10 @@ import {
   saveCustomer,
   getPaymentLink,
   createOrder,
-  markOrderPaid
+  markOrderPaid,
+  getFollowUpCustomers3Min,
+  getFollowUpCustomers1Day,
+  updateFollowUp
 } from "./db.js";
 
 dotenv.config();
@@ -23,20 +26,28 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+/* 🔥 Stripe webhook 必須 */
+app.use((req, res, next) => {
+  if (req.originalUrl === "/stripe-webhook") {
+    next();
+  } else {
+    express.json()(req, res, next);
+  }
+});
+
 app.use(cors());
-app.use(express.json());
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 /* =========================
-   ✅ 測試
+   🔥 基本測試
 ========================= */
 app.get("/", (req, res) => {
-  res.send("AI Sales System Running 🚀");
+  res.send("🔥 AI Sales System PRO Running");
 });
 
 /* =========================
-   🤖 Telegram（最穩版）
+   🤖 Telegram
 ========================= */
 app.post("/webhook/telegram", async (req, res) => {
   try {
@@ -44,8 +55,6 @@ app.post("/webhook/telegram", async (req, res) => {
     const text = req.body?.message?.text;
 
     if (!chatId || !text) return res.sendStatus(200);
-
-    console.log("📩 Telegram:", text);
 
     const analysis = await analyzeCustomer(text);
     const reply = await generateReply(text, analysis);
@@ -60,19 +69,17 @@ app.post("/webhook/telegram", async (req, res) => {
 
     res.sendStatus(200);
   } catch (err) {
-    console.error("❌ Telegram error:", err.message);
+    console.error("Telegram:", err.message);
     res.sendStatus(200);
   }
 });
 
 /* =========================
-   📸 IG / FB
+   📸 IG / FB 自動成交
 ========================= */
 app.post("/webhook/meta", async (req, res) => {
   try {
-    const entry = req.body.entry?.[0];
-    const messaging = entry?.messaging?.[0];
-
+    const messaging = req.body.entry?.[0]?.messaging?.[0];
     if (!messaging) return res.sendStatus(200);
 
     const senderId = messaging.sender.id;
@@ -80,21 +87,34 @@ app.post("/webhook/meta", async (req, res) => {
 
     if (!text) return res.sendStatus(200);
 
-    console.log("📩 IG:", text);
+    console.log("IG:", text);
 
+    // 🔥 存客戶
     await saveCustomer({
       platform_id: senderId,
-      message: text
+      message: text,
+      status: "new"
     });
 
+    // 🔥 AI 分析
     const analysis = await analyzeCustomer(text);
+
+    // 🔥 判斷客戶等級
+    let level = "cold";
+    if (analysis.includes("想") || analysis.includes("多少")) level = "hot";
+    if (analysis.includes("可以") || analysis.includes("好")) level = "ready";
+
+    // 🔥 AI 回覆
     let reply = await generatePlatformReply(text, analysis);
 
-    if (await shouldOfferPayment(analysis)) {
+    // 🔥 自動推付款（高轉換）
+    if (level === "ready" || (await shouldOfferPayment(analysis))) {
       const link = await getPaymentLink("growth");
-      reply += `\n\n👉 立即開始：\n${link}`;
+
+      reply += `\n\n👉 現在就可以幫你處理\n👉 這裡直接開始：\n${link}`;
     }
 
+    // 🔥 回訊息
     await axios.post(
       `https://graph.facebook.com/v18.0/me/messages?access_token=${process.env.PAGE_ACCESS_TOKEN}`,
       {
@@ -105,13 +125,13 @@ app.post("/webhook/meta", async (req, res) => {
 
     res.sendStatus(200);
   } catch (err) {
-    console.error("❌ IG error:", err.message);
+    console.error("IG:", err.message);
     res.sendStatus(200);
   }
 });
 
 /* =========================
-   💰 Stripe 建立付款
+   💰 Stripe Checkout
 ========================= */
 app.post("/create-checkout", async (req, res) => {
   try {
@@ -121,7 +141,9 @@ app.post("/create-checkout", async (req, res) => {
         {
           price_data: {
             currency: "usd",
-            product_data: { name: "AI Service" },
+            product_data: {
+              name: "AI Service"
+            },
             unit_amount: 1000 * 100
           },
           quantity: 1
@@ -134,7 +156,7 @@ app.post("/create-checkout", async (req, res) => {
 
     res.json({ url: session.url });
   } catch (err) {
-    console.error("❌ Stripe:", err.message);
+    console.error("Stripe:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -155,14 +177,14 @@ app.post(
         process.env.STRIPE_WEBHOOK_SECRET
       );
     } catch (err) {
-      console.error("❌ Webhook:", err.message);
+      console.error("Webhook:", err.message);
       return res.sendStatus(400);
     }
 
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
 
-      console.log("💰 Payment success:", session.id);
+      console.log("💰 成交:", session.id);
 
       await markOrderPaid(session.id);
     }
@@ -172,8 +194,51 @@ app.post(
 );
 
 /* =========================
+   🔥 自動追單系統
+========================= */
+setInterval(async () => {
+  try {
+    // 🔥 3分鐘追單
+    const list3Min = await getFollowUpCustomers3Min();
+
+    for (const c of list3Min) {
+      await axios.post(
+        `https://graph.facebook.com/v18.0/me/messages?access_token=${process.env.PAGE_ACCESS_TOKEN}`,
+        {
+          recipient: { id: c.platform_id },
+          message: {
+            text: "剛剛有看到你的狀況，其實這個很多人都有遇到，我可以幫你看看適合怎麼處理👉"
+          }
+        }
+      );
+
+      await updateFollowUp(c.id, "3min");
+    }
+
+    // 🔥 1天追單
+    const list1Day = await getFollowUpCustomers1Day();
+
+    for (const c of list1Day) {
+      await axios.post(
+        `https://graph.facebook.com/v18.0/me/messages?access_token=${process.env.PAGE_ACCESS_TOKEN}`,
+        {
+          recipient: { id: c.platform_id },
+          message: {
+            text: "昨天有看到你的訊息，如果你還在考慮，我這邊可以幫你分析最適合的方式🙏"
+          }
+        }
+      );
+
+      await updateFollowUp(c.id, "1day");
+    }
+  } catch (err) {
+    console.error("FollowUp:", err.message);
+  }
+}, 60000);
+
+/* =========================
    🚀 啟動
 ========================= */
 app.listen(PORT, () => {
-  console.log(`🔥 Server running on ${PORT}`);
+  console.log(`🔥 PRO Server running on ${PORT}`);
 });

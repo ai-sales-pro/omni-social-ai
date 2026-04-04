@@ -1,767 +1,1300 @@
 import express from "express";
 import axios from "axios";
-import cron from "node-cron";
-import { createClient } from "@supabase/supabase-js";
-import { getAIReply } from "./ai.js";
+import dotenv from "dotenv";
+import cors from "cors";
+import Stripe from "stripe";
+import crypto from "crypto";
+
+import {
+  analyzeCustomer,
+  generateReply,
+  shouldOfferPayment,
+  generatePlatformReply
+} from "./ai.js";
+
+import {
+  supabase,
+  saveCustomer,
+  getCustomer,
+  savePaymentLink,
+  getPaymentLink,
+  getCustomersByOwner,
+  createOrder,
+  getOrders,
+  markOrderPaid,
+  saveAISettings,
+  getAISettings,
+  getAllOwnersAdmin,
+  getFollowUpCustomers3Min,
+  getFollowUpCustomers1Day,
+  updateFollowUp
+} from "./db.js";
+
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
 
-function normalize(text = "") {
-  return String(text).trim().toLowerCase();
+const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION || "v25.0";
+const META_APP_ID = process.env.META_APP_ID || "";
+const META_APP_SECRET = process.env.META_APP_SECRET || "";
+const META_REDIRECT_URI = process.env.META_REDIRECT_URI || "";
+const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || "";
+
+app.use(cors());
+
+const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+
+/* =============================
+   工具
+============================= */
+
+async function sendTelegramMessage(chatId, text) {
+  await axios.post(`${TELEGRAM_API}/sendMessage`, {
+    chat_id: chatId,
+    text
+  });
 }
 
-function getLinks() {
-  return {
-    starter: process.env.STARTER_LINK || "https://your-payment-link.com/starter",
-    growth: process.env.GROWTH_LINK || "https://your-payment-link.com/growth",
-    premium: process.env.PREMIUM_LINK || "https://your-payment-link.com/premium",
-    elite: process.env.ELITE_LINK || "https://your-payment-link.com/elite"
-  };
+function isAIDisabled(settings) {
+  if (!settings) return false;
+  if (settings.autoMode === false) return true;
+  if (settings.auto_mode === false) return true;
+  if (settings.auto_reply === false) return true;
+  return false;
 }
 
-function getAdminIds() {
-  return String(process.env.ADMIN_USER_IDS || process.env.ADMIN_CHAT_ID || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
+function getFollowUpMessage3Min(customer, settings = {}) {
+  const followMode = settings.follow_up_mode || "standard";
+  const productName = settings.product_name || "方案";
 
-function isAdmin(userId) {
-  return getAdminIds().includes(String(userId));
-}
-
-function detectLanguage(text = "") {
-  if (/[ก-๙]/.test(text)) return "th";
-  if (/[\u4e00-\u9fff]/.test(text)) return "zh";
-  return "en";
-}
-
-function detectLeadLevel(text = "") {
-  const t = normalize(text);
-
-  if (
-    t.includes("company") ||
-    t.includes("agency") ||
-    t.includes("brand") ||
-    t.includes("team") ||
-    t.includes("clients") ||
-    t.includes("enterprise") ||
-    t.includes("custom") ||
-    t.includes("high-end") ||
-    t.includes("best version") ||
-    t.includes("strongest")
-  ) return "vip";
-
-  if (
-    t.includes("premium") ||
-    t.includes("elite") ||
-    t.includes("buy") ||
-    t.includes("ready") ||
-    t.includes("paid") ||
-    t.includes("payment done") ||
-    t.includes("i want it") ||
-    t.includes("let's do it") ||
-    t.includes("start now")
-  ) return "hot";
-
-  if (
-    t.includes("price") ||
-    t.includes("pricing") ||
-    t.includes("how much") ||
-    t.includes("cost") ||
-    t.includes("plans")
-  ) return "warm";
-
-  return "cold";
-}
-
-function detectIntent(text = "") {
-  const t = normalize(text);
-
-  if (t === "/reset") return "admin_reset";
-  if (t === "/status") return "admin_status";
-  if (t === "/lead") return "admin_lead";
-  if (t === "/health") return "admin_health";
-  if (t === "/handover") return "admin_handover";
-  if (t === "/ai") return "admin_ai";
-
-  if (t.includes("paid") || t.includes("payment done") || t.includes("i paid")) return "paid";
-
-  if (
-    t.includes("price") ||
-    t.includes("pricing") ||
-    t.includes("how much") ||
-    t.includes("cost") ||
-    t.includes("plans")
-  ) return "pricing";
-
-  if (
-    t.includes("starter") ||
-    t.includes("growth") ||
-    t.includes("premium") ||
-    t.includes("elite")
-  ) return "package";
-
-  if (
-    t.includes("buy") ||
-    t.includes("order") ||
-    t.includes("i want it") ||
-    t.includes("let's do it") ||
-    t.includes("start") ||
-    t.includes("payment")
-  ) return "buy";
-
-  if (
-    t.includes("discount") ||
-    t.includes("cheap") ||
-    t.includes("expensive") ||
-    t.includes("too expensive") ||
-    t.includes("thinking") ||
-    t.includes("not sure") ||
-    t.includes("maybe later")
-  ) return "objection";
-
-  if (
-    t.includes("support") ||
-    t.includes("help") ||
-    t.includes("edit") ||
-    t.includes("setup") ||
-    t.includes("tutorial") ||
-    t.includes("after sales")
-  ) return "support";
-
-  return "chat";
-}
-
-function getSupabase() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
-
-  if (!url || !key) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY/SUPABASE_KEY");
+  if (followMode === "gentle") {
+    return "我剛剛有幫你看了一下，其實你這個方向是可以處理的，你如果要的話我可以再幫你說明清楚一點。";
   }
 
-  return createClient(url, key);
+  if (followMode === "strong") {
+    return `我直接跟你說，這個狀況其實越早處理越有利，如果你要，我可以直接幫你抓最適合你的 ${productName}。`;
+  }
+
+  return `我剛剛幫你看過，其實這個是可以處理的，你要不要我幫你看適合你的 ${productName}？`;
 }
 
-async function sendTelegramMessage(token, chatId, text) {
-  if (!token || !chatId || !text) return;
+function getFollowUpMessage1Day(customer, settings = {}) {
+  const followMode = settings.follow_up_mode || "standard";
+  const productName = settings.product_name || "方案";
 
-  const result = await axios.post(
-    `https://api.telegram.org/bot${token}/sendMessage`,
-    {
-      chat_id: chatId,
-      text: String(text)
-    }
-  );
+  if (followMode === "gentle") {
+    return `我這邊再提醒你一下，如果你還在考慮，我可以再幫你整理一次適合你的 ${productName} 方向。`;
+  }
 
-  return result.data;
+  if (followMode === "strong") {
+    return "我再提醒你一次，這種狀況通常不建議拖，拖久會更難處理。如果你要，我可以直接幫你安排下一步。";
+  }
+
+  return `再提醒你一次，這個真的建議不要拖，拖久會更難處理。如果你要，我可以直接幫你安排適合你的 ${productName}。`;
 }
 
-async function sendNotify(text) {
-  if (!process.env.NOTIFY_BOT_TOKEN || !process.env.NOTIFY_CHAT_ID) return;
+async function safeSendTelegramMessage(chatId, text) {
   try {
-    await sendTelegramMessage(
-      process.env.NOTIFY_BOT_TOKEN,
-      process.env.NOTIFY_CHAT_ID,
-      text
-    );
+    await sendTelegramMessage(chatId, text);
   } catch (err) {
-    console.log("Notify error:", err.message);
+    console.log("send telegram error:", err?.response?.data || err.message);
   }
 }
 
-async function getLead(userId) {
-  const supabase = getSupabase();
+function getStripePlanByAmount(amount) {
+  if (amount === 1280) return "month";
+  if (amount === 3000) return "quarter";
+  if (amount === 10000) return "year";
+  return "unknown";
+}
 
+function hashPassword(password = "") {
+  return crypto.createHash("sha256").update(String(password)).digest("hex");
+}
+
+function normalizePlan(plan = "", amount = 0) {
+  const p = String(plan || "").toLowerCase();
+
+  if (p.includes("starter") || p.includes("month") || p.includes("月")) {
+    return "starter";
+  }
+
+  if (p.includes("growth") || p.includes("quarter") || p.includes("季")) {
+    return "growth";
+  }
+
+  if (p.includes("elite") || p.includes("year") || p.includes("年")) {
+    return "elite";
+  }
+
+  if (Number(amount) === 1280) return "starter";
+  if (Number(amount) === 3000) return "growth";
+  if (Number(amount) === 10000) return "elite";
+
+  return "growth";
+}
+
+function getMetaOAuthScopes() {
+  return [
+    "pages_show_list",
+    "pages_manage_metadata",
+    "pages_messaging",
+    "instagram_basic",
+    "instagram_manage_messages",
+    "business_management"
+  ].join(",");
+}
+
+function buildMetaState(payload = {}) {
+  return Buffer.from(JSON.stringify(payload)).toString("base64url");
+}
+
+function parseMetaState(state = "") {
+  try {
+    return JSON.parse(Buffer.from(String(state), "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function getUserByEmail(email) {
   const { data, error } = await supabase
-    .from("leads")
+    .from("users")
     .select("*")
-    .eq("user_id", String(userId))
+    .eq("email", String(email))
     .maybeSingle();
 
   if (error) throw error;
-  if (data) return data;
-
-  const newLead = {
-    user_id: String(userId),
-    source: "telegram",
-    language: "en",
-    level: "cold",
-    stage: "lead",
-    paid: false,
-    assigned_human: false,
-    package: "",
-    name: "",
-    industry: "",
-    platform: "",
-    budget: "",
-    goal: "",
-    notes: "",
-    asked_price: false,
-    asked_discount: false,
-    last_message: "",
-    last_intent: "",
-    message_count: 0,
-    followup_count: 0,
-    next_followup_at: null,
-    last_followup_at: null
-  };
-
-  const { data: inserted, error: insertError } = await supabase
-    .from("leads")
-    .insert(newLead)
-    .select()
-    .single();
-
-  if (insertError) throw insertError;
-  return inserted;
+  return data;
 }
 
-async function updateLead(userId, patch) {
-  const supabase = getSupabase();
-
-  const payload = {
-    ...patch,
-    updated_at: new Date().toISOString()
-  };
-
+async function createDefaultAISettings(ownerId) {
   const { error } = await supabase
-    .from("leads")
-    .update(payload)
-    .eq("user_id", String(userId));
+    .from("ai_settings")
+    .upsert(
+      {
+        owner_id: String(ownerId),
+        auto_reply: true,
+        auto_payment_push: true,
+        customer_analysis: true,
+        follow_up_mode: "standard",
+        default_plan: "growth",
+        tone_style: "closing",
+        auto_mode: true,
+        industry: "fortune",
+        primary_language: "zh-TW",
+        business_name: "",
+        product_name: "",
+        product_price: 0,
+        brand_style: "",
+        custom_prompt: "",
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: "owner_id" }
+    );
 
   if (error) throw error;
 }
 
-async function addMessage(userId, role, content, source = "telegram") {
-  const supabase = getSupabase();
+async function createUserFromPaidSession({ email, password, plan }) {
+  const existingUser = await getUserByEmail(email);
 
-  const { error } = await supabase.from("messages").insert({
-    user_id: String(userId),
-    role,
-    content: String(content || ""),
-    source
-  });
-
-  if (error) throw error;
-}
-
-async function getRecentMessages(userId, limit = 12) {
-  const supabase = getSupabase();
-
-  const { data, error } = await supabase
-    .from("messages")
-    .select("role, content, created_at")
-    .eq("user_id", String(userId))
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (error) throw error;
-  return (data || []).reverse();
-}
-
-async function createOrderFromLead(lead) {
-  const supabase = getSupabase();
-
-  const { error } = await supabase.from("orders").insert({
-    user_id: lead.user_id,
-    package: lead.package || "",
-    paid: lead.paid || false,
-    name: lead.name || "",
-    industry: lead.industry || "",
-    platform: lead.platform || "",
-    budget: lead.budget || "",
-    goal: lead.goal || "",
-    source: lead.source || "telegram"
-  });
-
-  if (error) throw error;
-}
-
-async function resetLead(userId) {
-  const reset = {
-    language: "en",
-    level: "cold",
-    stage: "lead",
-    paid: false,
-    assigned_human: false,
-    package: "",
-    name: "",
-    industry: "",
-    platform: "",
-    budget: "",
-    goal: "",
-    notes: "",
-    asked_price: false,
-    asked_discount: false,
-    last_message: "",
-    last_intent: "",
-    message_count: 0,
-    next_followup_at: null,
-    last_followup_at: null,
-    followup_count: 0
-  };
-
-  await updateLead(userId, reset);
-}
-
-async function buildSalesReply(message, lead) {
-  const text = normalize(message);
-  const { starter, growth, premium, elite } = getLinks();
-
-  if (lead.notes === "collect_name") {
-    await updateLead(lead.user_id, {
-      name: message,
-      notes: "collect_industry",
-      stage: "onboarding"
-    });
-    return "Awesome — what industry are you in? For example: e-commerce, coaching, real estate, restaurant, or agency.";
-  }
-
-  if (lead.notes === "collect_industry") {
-    await updateLead(lead.user_id, {
-      industry: message,
-      notes: "collect_platform"
-    });
-    return "Which platform do you want to use first? For example: Telegram, Instagram, WhatsApp, or Website.";
-  }
-
-  if (lead.notes === "collect_platform") {
-    await updateLead(lead.user_id, {
-      platform: message,
-      notes: "collect_budget"
-    });
-    return "What’s your approximate budget? For example: $100, $300, $700, or $30,000.";
-  }
-
-  if (lead.notes === "collect_budget") {
-    await updateLead(lead.user_id, {
-      budget: message,
-      notes: "collect_goal"
-    });
-    return "What’s your main goal right now? For example: automate replies, increase inquiries, improve conversion, or multi-platform setup.";
-  }
-
-  if (lead.notes === "collect_goal") {
-    const finalLead = await getLead(lead.user_id);
-
-    await updateLead(lead.user_id, {
-      goal: message,
-      notes: "",
-      stage: "onboarding_done"
-    });
-
-    const updatedLead = {
-      ...finalLead,
-      goal: message
+  if (existingUser) {
+    return {
+      ownerId: existingUser.owner_id,
+      plan: existingUser.plan || plan,
+      isExisting: true
     };
-
-    await createOrderFromLead(updatedLead);
-
-    await sendNotify(`💰 New complete order
-
-User: ${updatedLead.user_id}
-Level: ${updatedLead.level}
-Package: ${updatedLead.package || "Not set"}
-Name: ${updatedLead.name || "Not set"}
-Industry: ${updatedLead.industry || "Not set"}
-Platform: ${updatedLead.platform || "Not set"}
-Budget: ${updatedLead.budget || "Not set"}
-Goal: ${updatedLead.goal || "Not set"}`);
-
-    return `Perfect — I’ve got everything I need.
-
-Package: ${updatedLead.package || "Not selected"}
-Name: ${updatedLead.name || "Not set"}
-Industry: ${updatedLead.industry || "Not set"}
-Platform: ${updatedLead.platform || "Not set"}
-Budget: ${updatedLead.budget || "Not set"}
-Goal: ${updatedLead.goal || "Not set"}
-
-I’ll help you with the next step from here. 🚀`;
   }
 
-  if (text === "hi" || text === "hello" || text === "hey") {
-    return `Hey 👋 I help businesses automate replies, qualify leads, and turn more conversations into sales. Are you looking to improve response speed, conversion rate, or both?`;
+  let ownerId = `boss_${crypto.randomBytes(4).toString("hex")}`;
+
+  for (let i = 0; i < 5; i++) {
+    const { data, error } = await supabase
+      .from("users")
+      .select("owner_id")
+      .eq("owner_id", ownerId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) break;
+
+    ownerId = `boss_${crypto.randomBytes(4).toString("hex")}`;
   }
 
-  if (
-    text.includes("what do you do") ||
-    text.includes("what is this") ||
-    text.includes("what can you do") ||
-    text.includes("how does this work")
-  ) {
-    return `I build AI sales systems that can reply to leads, guide them through your offers, collect key details, and help move conversations toward conversion. In simple terms, it saves you time and helps you close more leads automatically.`;
-  }
+  const passwordHash = hashPassword(password);
 
-  if (
-    text.includes("best version") ||
-    text.includes("strongest") ||
-    text.includes("top version") ||
-    text.includes("enterprise") ||
-    text.includes("custom") ||
-    text.includes("30000")
-  ) {
-    await updateLead(lead.user_id, {
-      package: "Elite 30000",
-      stage: "elite_offer",
-      asked_price: true
-    });
-
-    return `If you want the most advanced option, I’d recommend the Elite 30000 system. This is not just a simple chatbot — it’s a custom AI sales system built to handle natural conversations, lead qualification, follow-up, and high-end conversion flow. 👉 ${elite}`;
-  }
-
-  if (text.includes("paid") || text.includes("payment done") || text.includes("i paid")) {
-    await updateLead(lead.user_id, {
-      paid: true,
-      stage: "paid",
-      notes: "collect_name"
-    });
-
-    await sendNotify(`💳 Customer says they paid
-
-User: ${lead.user_id}
-Level: ${lead.level}
-Package: ${lead.package || "Not set"}
-Message: ${message}`);
-
-    return `Amazing 🎉 I’ve marked your payment. Let’s get started — first, what name should I put on your setup?`;
-  }
-
-  if (
-    text.includes("price") ||
-    text.includes("pricing") ||
-    text.includes("how much") ||
-    text.includes("cost") ||
-    text.includes("plans")
-  ) {
-    await updateLead(lead.user_id, {
-      asked_price: true,
-      stage: "pricing",
-      next_followup_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-    });
-
-    if (lead.level === "vip") {
-      await updateLead(lead.user_id, { package: "Elite 30000" });
-      return `Based on your needs, I’d strongly recommend the Elite 30000 version.
-
-It’s designed for brands, teams, agencies, and businesses that want a true custom AI sales system with advanced conversation flow, follow-up logic, and multi-platform support.
-
-👉 ${elite}
-
-If you want, I can also show you the smaller options first.`;
-    }
-
-    return `Here are the current options:
-
-Starter — $99
-👉 ${starter}
-
-Growth — $299 (most popular)
-👉 ${growth}
-
-Premium — $699
-👉 ${premium}
-
-Elite 30000 — custom business-grade AI sales system
-👉 ${elite}
-
-You can reply with:
-Starter / Growth / Premium / Elite`;
-  }
-
-  if (text.includes("starter")) {
-    await updateLead(lead.user_id, { package: "Starter" });
-    return `Starter — $99
-
-Best if you want to test quickly and get started with a smaller budget.
-👉 ${starter}
-
-After payment, reply with:
-Paid`;
-  }
-
-  if (text.includes("growth")) {
-    await updateLead(lead.user_id, { package: "Growth" });
-    return `Growth — $299
-
-This is the most popular option because it gives you the best balance between results and cost.
-👉 ${growth}
-
-After payment, reply with:
-Paid`;
-  }
-
-  if (text.includes("premium")) {
-    await updateLead(lead.user_id, { package: "Premium" });
-    return `Premium — $699
-
-This is the stronger, more complete version if you want more automation and better conversion flow.
-👉 ${premium}
-
-After payment, reply with:
-Paid`;
-  }
-
-  if (text.includes("elite")) {
-    await updateLead(lead.user_id, { package: "Elite 30000" });
-    return `Elite 30000
-
-This is a custom business-grade AI sales system built for serious growth.
-It can be tailored to your brand, sales process, lead flow, and platforms.
-👉 ${elite}
-
-If you want, I can help you map the right setup first.`;
-  }
-
-  if (
-    text.includes("buy") ||
-    text.includes("order") ||
-    text.includes("i want it") ||
-    text.includes("let's do it") ||
-    text.includes("let us start") ||
-    text.includes("start")
-  ) {
-    if (lead.level === "vip") {
-      await updateLead(lead.user_id, { package: lead.package || "Elite 30000" });
-      return `Based on your needs, I’d recommend going with the higher-end setup:
-
-Elite 30000 — custom AI sales system
-👉 ${elite}
-
-If you want a faster standard option first, Premium is also strong:
-Premium — $699
-👉 ${premium}`;
-    }
-
-    await updateLead(lead.user_id, { package: lead.package || "Growth" });
-    return `If you want the best balance of value and performance, I’d recommend Growth.
-
-Growth — $299
-👉 ${growth}
-
-If you want the stronger version, Premium is here too:
-Premium — $699
-👉 ${premium}`;
-  }
-
-  if (
-    text.includes("too expensive") ||
-    text.includes("expensive") ||
-    text.includes("not sure") ||
-    text.includes("thinking") ||
-    text.includes("maybe later") ||
-    text.includes("discount")
-  ) {
-    await updateLead(lead.user_id, {
-      asked_discount: true,
-      next_followup_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString()
-    });
-
-    return `Totally fair.
-
-If you want to start smaller, I’d recommend:
-Growth — $299
-👉 ${growth}
-
-If you just want to test first:
-Starter — $99
-👉 ${starter}
-
-And if your goal is to build a serious revenue-driving system, Elite 30000 is the right long-term move:
-👉 ${elite}`;
-  }
-
-  if (lead.paid) {
-    await updateLead(lead.user_id, { stage: "support" });
-    return "Got it — you can now tell me exactly what you want to change, set up, or launch first.";
-  }
-
-  return `Hey 👋 This is an AI sales system built to help you automate replies and close more conversations. If you want, I can show you the pricing or help you figure out which setup fits you best.`;
-}
-
-async function routeMessage(message, userId, source = "telegram") {
-  const lead = await getLead(userId);
-  const intent = detectIntent(message);
-  const language = detectLanguage(message);
-  const level = detectLeadLevel(message);
-
-  await updateLead(userId, {
-    last_message: message,
-    last_intent: intent,
-    language,
-    level,
-    message_count: (lead.message_count || 0) + 1
+  const { error: userError } = await supabase.from("users").insert({
+    owner_id: ownerId,
+    email,
+    password_hash: passwordHash,
+    plan,
+    status: "active"
   });
 
-  const freshLead = await getLead(userId);
-  let reply = "";
+  if (userError) throw userError;
 
-  if (intent === "admin_status" && isAdmin(userId)) {
-    reply = `📊 Status
+  const { error: subError } = await supabase.from("subscriptions").insert({
+    owner_id: ownerId,
+    plan,
+    status: "active",
+    started_at: new Date().toISOString()
+  });
 
-⭐ Level: ${freshLead.level}
-🧭 Stage: ${freshLead.stage}
-💳 Paid: ${freshLead.paid ? "Yes" : "No"}
-📦 Package: ${freshLead.package || "Not selected"}
-👤 Name: ${freshLead.name || "Not set"}
-📊 Industry: ${freshLead.industry || "Not set"}
-📱 Platform: ${freshLead.platform || "Not set"}
-💵 Budget: ${freshLead.budget || "Not set"}
-🎯 Goal: ${freshLead.goal || "Not set"}`;
-  } else if (intent === "admin_reset" && isAdmin(userId)) {
-    await resetLead(userId);
-    reply = "✅ Your lead status has been reset.";
-  } else if (intent === "admin_lead" && isAdmin(userId)) {
-    reply = `⭐ Current lead level: ${level}`;
-  } else if (intent === "admin_health" && isAdmin(userId)) {
-    reply = `✅ System status looks good
-Telegram: ${process.env.TELEGRAM_BOT_TOKEN ? "ON" : "OFF"}
-Supabase: ${process.env.SUPABASE_URL ? "ON" : "OFF"}`;
-  } else if (intent === "admin_handover" && isAdmin(userId)) {
-    await updateLead(userId, { assigned_human: true });
-    reply = "✅ Switched to human handover mode.";
-  } else if (intent === "admin_ai" && isAdmin(userId)) {
-    await updateLead(userId, { assigned_human: false });
-    reply = "✅ Switched back to AI mode.";
-  }
+  if (subError) throw subError;
 
-  if (reply) {
-    await addMessage(userId, "user", message, source);
-    await addMessage(userId, "assistant", reply, source);
-    return reply;
-  }
+  const { error: paymentError } = await supabase
+    .from("payment_settings")
+    .upsert(
+      {
+        owner_id: ownerId,
+        payment_link: "",
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: "owner_id" }
+    );
 
-  reply = await buildSalesReply(message, freshLead);
-  await addMessage(userId, "user", message, source);
-  await addMessage(userId, "assistant", reply, source);
-  return reply;
+  if (paymentError) throw paymentError;
+
+  await createDefaultAISettings(ownerId);
+
+  return {
+    ownerId,
+    plan,
+    isExisting: false
+  };
 }
 
-async function processFollowups() {
-  try {
-    const supabase = getSupabase();
-    const now = new Date().toISOString();
+async function handleUniversalAI({
+  ownerId,
+  chatId,
+  message,
+  platform,
+  sendReply
+}) {
+  const settings = await getAISettings(ownerId);
 
-    const { data, error } = await supabase
-      .from("leads")
-      .select("*")
-      .lte("next_followup_at", now)
-      .eq("paid", false)
-      .limit(20);
+  if (isAIDisabled(settings)) return;
 
-    if (error) {
-      console.log("Follow-up query error:", error.message);
-      return;
+  const analysis = await analyzeCustomer(message);
+  const memory = await getCustomer(ownerId, chatId);
+
+  const reply = await generateReply(
+    message,
+    analysis,
+    memory,
+    settings || {}
+  );
+
+  await sendReply(reply);
+
+  if (shouldOfferPayment(message, analysis, settings || {})) {
+    const link = await getPaymentLink(ownerId);
+
+    if (link) {
+      await sendReply(`這是你可以直接開始的方式👇\n${link}`);
+
+      await createOrder({
+        ownerId,
+        chatId,
+        name: "客戶",
+        plan: settings?.product_name || "方案",
+        amount: Number(settings?.product_price || 0),
+        paymentLink: link,
+        source: platform,
+        status: "pending"
+      });
+    }
+  }
+
+  await saveCustomer(ownerId, chatId, analysis, message);
+}
+
+/* =============================
+   Stripe Webhook（真實收入）
+============================= */
+
+app.post(
+  "/webhook/stripe",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    let event;
+
+    try {
+      const signature = req.headers["stripe-signature"];
+
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        signature,
+        STRIPE_WEBHOOK_SECRET
+      );
+    } catch (err) {
+      console.log("stripe webhook verify error:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    for (const lead of data || []) {
-      if (!process.env.TELEGRAM_BOT_TOKEN) continue;
+    try {
+      if (event.type === "checkout.session.completed") {
+        const session = event.data.object;
 
-      let text = "Hey 👋 Just checking in — are you more interested in seeing the features, or do you want me to recommend the best plan for your business?";
+        const customerEmail = session.customer_email || "";
+        const amount = Number(session.amount_total || 0) / 100;
 
-      if (lead.asked_price) {
-        text = "Hey 👋 You already looked at the plans before. If you want, I can help you choose the best fit between Starter, Growth, Premium, and Elite.";
-      }
+        const metadataPlan = session.metadata?.plan || "";
+        const plan = metadataPlan || getStripePlanByAmount(amount);
 
-      if (lead.asked_discount) {
-        text = "If budget is the main concern, I can help you pick the most efficient option based on what you actually need right now.";
-      }
-
-      try {
-        await sendTelegramMessage(process.env.TELEGRAM_BOT_TOKEN, lead.user_id, text);
-        await addMessage(lead.user_id, "assistant", text, "followup");
-
-        await updateLead(lead.user_id, {
-          last_followup_at: new Date().toISOString(),
-          next_followup_at: null,
-          followup_count: (lead.followup_count || 0) + 1
+        await createOrder({
+          ownerId: "system",
+          chatId: customerEmail || `stripe_${session.id}`,
+          name: customerEmail || "Stripe Customer",
+          plan,
+          amount,
+          paymentLink: "",
+          source: "stripe",
+          status: "paid"
         });
-      } catch (err) {
-        console.log("Follow-up send error:", err.message);
-      }
-    }
-  } catch (err) {
-    console.log("processFollowups error:", err.message);
-  }
-}
 
-cron.schedule("*/10 * * * *", async () => {
-  try {
-    await processFollowups();
-  } catch (err) {
-    console.log("Cron error:", err.message);
+        console.log("💰 Stripe 收款成功:", {
+          email: customerEmail,
+          amount,
+          plan
+        });
+      }
+
+      return res.json({ received: true });
+    } catch (err) {
+      console.log("stripe webhook process error:", err.message);
+      return res.status(500).json({
+        ok: false,
+        message: "Stripe webhook 處理失敗"
+      });
+    }
   }
-});
+);
+
+/* =============================
+   其他 API 用 JSON
+============================= */
+
+app.use(express.json());
+
+/* =============================
+   健康檢查 / Debug
+============================= */
 
 app.get("/", (req, res) => {
-  res.send("AI Sales Bot Running 🚀");
+  res.send("🔥 AI Sales Pro MAX Running");
 });
 
-app.get("/health", async (req, res) => {
+app.get("/health", (req, res) => {
   res.json({
     ok: true,
-    service: "ai-sales-bot",
-    hasTelegram: !!process.env.TELEGRAM_BOT_TOKEN,
-    hasSupabaseUrl: !!process.env.SUPABASE_URL,
-    hasSupabaseKey: !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY)
+    service: "ai-sales-system",
+    time: new Date().toISOString()
   });
 });
 
-app.get("/chat", async (req, res) => {
+app.get("/api/debug/routes", (req, res) => {
+  res.json({
+    ok: true,
+    routes: [
+      "GET /",
+      "GET /health",
+      "GET /api/debug/routes",
+      "GET /api/channel-connections/:ownerId",
+      "POST /api/channel-connections/disconnect",
+      "POST /api/industry-profile",
+      "GET /api/connect/meta/start",
+      "GET /api/connect/meta/callback",
+      "POST /api/platform-ai-chat",
+      "GET /api/stripe/session-info",
+      "POST /api/register-from-payment",
+      "POST /api/login",
+      "GET /api/ai-settings/:ownerId",
+      "POST /api/ai-settings",
+      "POST /api/admin/toggle-ai",
+      "GET /api/admin/owners",
+      "POST /api/admin/send-message",
+      "POST /api/admin/push-payment",
+      "GET /api/customers/:ownerId",
+      "GET /api/orders/:ownerId",
+      "POST /api/mark-paid",
+      "POST /api/payment-link",
+      "GET /api/payment-link/:ownerId",
+      "POST /webhook/telegram",
+      "GET /webhook/meta",
+      "POST /webhook/meta",
+      "POST /webhook/stripe"
+    ]
+  });
+});
+
+/* =============================
+   Channels / Industry / Meta Connect
+============================= */
+
+app.get("/api/channel-connections/:ownerId", async (req, res) => {
   try {
-    const message = String(req.query.message || "");
-    const userId = String(req.query.user || "web");
-    const reply = await routeMessage(message, userId, "web");
-    res.send(reply);
+    const ownerId = String(req.params.ownerId || "");
+
+    if (!ownerId) {
+      return res.status(400).json({
+        ok: false,
+        message: "ownerId 必填"
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("channel_connections")
+      .select("*")
+      .eq("owner_id", ownerId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    return res.json({
+      ok: true,
+      connections: data || []
+    });
   } catch (err) {
-    console.log("Web chat error:", err.message);
-    res.status(500).send("The system is busy right now. Please try again shortly.");
+    console.log("get channel connections error:", err.message);
+    return res.status(500).json({
+      ok: false,
+      message: "讀取渠道綁定失敗",
+      error: err.message
+    });
   }
 });
+
+app.post("/api/channel-connections/disconnect", async (req, res) => {
+  try {
+    const { ownerId, platform } = req.body || {};
+
+    if (!ownerId || !platform) {
+      return res.status(400).json({
+        ok: false,
+        message: "ownerId 和 platform 必填"
+      });
+    }
+
+    const { error } = await supabase
+      .from("channel_connections")
+      .update({
+        status: "disconnected",
+        updated_at: new Date().toISOString()
+      })
+      .eq("owner_id", String(ownerId))
+      .eq("platform", String(platform));
+
+    if (error) throw error;
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.log("disconnect channel error:", err.message);
+    return res.status(500).json({
+      ok: false,
+      message: "解除綁定失敗"
+    });
+  }
+});
+
+app.post("/api/industry-profile", async (req, res) => {
+  try {
+    const {
+      ownerId,
+      industry,
+      offerName,
+      offerPrice,
+      closingStyle = "balanced",
+      urgencyStyle = "medium",
+      trustStyle = "consultant",
+      multilingual = true,
+      primaryLanguage = "auto",
+      customSalesPrompt = ""
+    } = req.body || {};
+
+    if (!ownerId) {
+      return res.status(400).json({
+        ok: false,
+        message: "ownerId 必填"
+      });
+    }
+
+    const { error } = await supabase
+      .from("industry_profiles")
+      .upsert(
+        {
+          owner_id: String(ownerId),
+          industry: industry || "fortune",
+          offer_name: offerName || "",
+          offer_price: Number(offerPrice || 0),
+          closing_style: closingStyle,
+          urgency_style: urgencyStyle,
+          trust_style: trustStyle,
+          multilingual: Boolean(multilingual),
+          primary_language: primaryLanguage || "auto",
+          custom_sales_prompt: customSalesPrompt || "",
+          updated_at: new Date().toISOString()
+        },
+        {
+          onConflict: "owner_id"
+        }
+      );
+
+    if (error) throw error;
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.log("save industry profile error:", err.message);
+    return res.status(500).json({
+      ok: false,
+      message: "儲存行業設定失敗"
+    });
+  }
+});
+
+app.get("/api/connect/meta/start", async (req, res) => {
+  try {
+    const ownerId = String(req.query.ownerId || "");
+    const platform = String(req.query.platform || "facebook");
+
+    if (!ownerId) {
+      return res.status(400).send("ownerId required");
+    }
+
+    const state = buildMetaState({
+      ownerId,
+      platform,
+      ts: Date.now()
+    });
+
+    const authUrl =
+      `https://www.facebook.com/${GRAPH_API_VERSION}/dialog/oauth` +
+      `?client_id=${encodeURIComponent(META_APP_ID)}` +
+      `&redirect_uri=${encodeURIComponent(META_REDIRECT_URI)}` +
+      `&state=${encodeURIComponent(state)}` +
+      `&scope=${encodeURIComponent(getMetaOAuthScopes())}`;
+
+    return res.redirect(authUrl);
+  } catch (err) {
+    console.log("meta start error:", err.message);
+    return res.status(500).send("meta connect start error");
+  }
+});
+
+app.get("/api/connect/meta/callback", async (req, res) => {
+  try {
+    const code = String(req.query.code || "");
+    const state = String(req.query.state || "");
+
+    if (!code || !state) {
+      return res.status(400).send("missing code/state");
+    }
+
+    const parsedState = parseMetaState(state);
+
+    if (!parsedState?.ownerId) {
+      return res.status(400).send("invalid state");
+    }
+
+    const ownerId = String(parsedState.ownerId);
+
+    const tokenRes = await axios.get(
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/oauth/access_token`,
+      {
+        params: {
+          client_id: META_APP_ID,
+          client_secret: META_APP_SECRET,
+          redirect_uri: META_REDIRECT_URI,
+          code
+        }
+      }
+    );
+
+    const userAccessToken = tokenRes.data?.access_token || "";
+
+    if (!userAccessToken) {
+      return res.status(400).send("no user access token");
+    }
+
+    const pagesRes = await axios.get(
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/me/accounts`,
+      {
+        params: {
+          access_token: userAccessToken,
+          fields: "id,name,access_token,instagram_business_account{id,username}"
+        }
+      }
+    );
+
+    const pages = pagesRes.data?.data || [];
+
+    if (!pages.length) {
+      return res.status(400).send("no facebook page found");
+    }
+
+    const page = pages[0];
+
+    const { error: fbError } = await supabase
+      .from("channel_connections")
+      .upsert(
+        {
+          owner_id: ownerId,
+          platform: "facebook",
+          channel_name: page.name || "Facebook Page",
+          external_id: String(page.id || ""),
+          access_token: page.access_token || "",
+          refresh_token: "",
+          meta_user_id: "",
+          meta_business_id: "",
+          status: "connected",
+          updated_at: new Date().toISOString()
+        },
+        {
+          onConflict: "owner_id,platform"
+        }
+      );
+
+    if (fbError) throw fbError;
+
+    const igBiz = page.instagram_business_account;
+
+    if (igBiz?.id) {
+      const { error: igError } = await supabase
+        .from("channel_connections")
+        .upsert(
+          {
+            owner_id: ownerId,
+            platform: "instagram",
+            channel_name: igBiz.username || "Instagram Business",
+            external_id: String(igBiz.id || ""),
+            access_token: page.access_token || "",
+            refresh_token: "",
+            meta_user_id: "",
+            meta_business_id: "",
+            status: "connected",
+            updated_at: new Date().toISOString()
+          },
+          {
+            onConflict: "owner_id,platform"
+          }
+        );
+
+      if (igError) throw igError;
+    }
+
+    return res.redirect("/?page=Channels");
+  } catch (err) {
+    console.log("meta callback error:", err?.response?.data || err.message);
+    return res.status(500).send("meta callback error");
+  }
+});
+
+/* =============================
+   平台訂閱 AI
+============================= */
+
+app.post("/api/platform-ai-chat", async (req, res) => {
+  try {
+    const { message } = req.body;
+
+    if (!message) {
+      return res.status(400).json({
+        ok: false,
+        message: "message 必填"
+      });
+    }
+
+    const result = await generatePlatformReply(message);
+
+    res.json({
+      ok: true,
+      ...result
+    });
+  } catch (err) {
+    console.log("platform ai chat error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "平台 AI 回覆失敗"
+    });
+  }
+});
+
+/* =============================
+   Stripe Session / Register / Login
+============================= */
+
+app.get("/api/stripe/session-info", async (req, res) => {
+  try {
+    const sessionId = req.query.session_id || req.query.sessionId || "";
+
+    if (!sessionId) {
+      return res.json({
+        ok: false,
+        message: "missing session_id"
+      });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (!session) {
+      return res.json({
+        ok: false,
+        message: "找不到付款 session"
+      });
+    }
+
+    if (session.payment_status !== "paid") {
+      return res.json({
+        ok: false,
+        message: "付款尚未完成"
+      });
+    }
+
+    const email = session.customer_email || "";
+    const amount = Number(session.amount_total || 0) / 100;
+    const plan = normalizePlan(session.metadata?.plan || "", amount);
+
+    return res.json({
+      ok: true,
+      email,
+      amount,
+      plan
+    });
+  } catch (err) {
+    console.log("stripe session info error:", err.message);
+    return res.status(500).json({
+      ok: false,
+      message: "stripe session error"
+    });
+  }
+});
+
+app.post("/api/register-from-payment", async (req, res) => {
+  try {
+    const { sessionId, email, password } = req.body || {};
+
+    if (!sessionId || !email || !password) {
+      return res.json({
+        ok: false,
+        message: "missing fields"
+      });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (!session) {
+      return res.json({
+        ok: false,
+        message: "找不到付款 session"
+      });
+    }
+
+    if (session.payment_status !== "paid") {
+      return res.json({
+        ok: false,
+        message: "payment not verified"
+      });
+    }
+
+    const paidEmail = session.customer_email || "";
+    const amount = Number(session.amount_total || 0) / 100;
+    const plan = normalizePlan(session.metadata?.plan || "", amount);
+
+    if (
+      paidEmail &&
+      String(paidEmail).toLowerCase() !== String(email).toLowerCase()
+    ) {
+      return res.json({
+        ok: false,
+        message: "付款 Email 與註冊 Email 不一致"
+      });
+    }
+
+    const created = await createUserFromPaidSession({
+      email,
+      password,
+      plan
+    });
+
+    return res.json({
+      ok: true,
+      ownerId: created.ownerId,
+      plan: created.plan,
+      isExisting: created.isExisting
+    });
+  } catch (err) {
+    console.log("register from payment error:", err.message);
+    return res.status(500).json({
+      ok: false,
+      message: "register failed"
+    });
+  }
+});
+
+app.post("/api/login", async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+
+    if (!email || !password) {
+      return res.json({
+        ok: false,
+        message: "missing fields"
+      });
+    }
+
+    const user = await getUserByEmail(email);
+
+    if (!user) {
+      return res.json({
+        ok: false,
+        message: "帳號不存在"
+      });
+    }
+
+    const passwordHash = hashPassword(password);
+
+    if (user.password_hash !== passwordHash) {
+      return res.json({
+        ok: false,
+        message: "密碼錯誤"
+      });
+    }
+
+    return res.json({
+      ok: true,
+      ownerId: user.owner_id,
+      plan: user.plan || "",
+      email: user.email || ""
+    });
+  } catch (err) {
+    console.log("login error:", err.message);
+    return res.status(500).json({
+      ok: false,
+      message: "login failed"
+    });
+  }
+});
+
+/* =============================
+   AI 開關 / AI 設定
+============================= */
+
+app.get("/api/ai-settings/:ownerId", async (req, res) => {
+  try {
+    const settings = await getAISettings(req.params.ownerId);
+    res.json({ ok: true, settings: settings || null });
+  } catch (err) {
+    console.log("get ai settings error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "讀取 AI 設定失敗"
+    });
+  }
+});
+
+app.post("/api/ai-settings", async (req, res) => {
+  try {
+    const { ownerId, ...settings } = req.body;
+
+    if (!ownerId) {
+      return res.status(400).json({
+        ok: false,
+        message: "ownerId 必填"
+      });
+    }
+
+    await saveAISettings(ownerId, settings);
+
+    res.json({
+      ok: true,
+      message: "AI 設定已儲存"
+    });
+  } catch (err) {
+    console.log("save ai settings error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "儲存 AI 設定失敗"
+    });
+  }
+});
+
+app.post("/api/admin/toggle-ai", async (req, res) => {
+  try {
+    const { ownerId, enabled } = req.body;
+
+    if (!ownerId) {
+      return res.status(400).json({
+        ok: false,
+        message: "ownerId 必填"
+      });
+    }
+
+    await saveAISettings(ownerId, {
+      autoMode: enabled,
+      autoReply: enabled
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.log("toggle ai error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "切換 AI 失敗"
+    });
+  }
+});
+
+/* =============================
+   Admin
+============================= */
+
+app.get("/api/admin/owners", async (req, res) => {
+  try {
+    const owners = await getAllOwnersAdmin();
+    res.json({ ok: true, owners });
+  } catch (err) {
+    console.log("get admin owners error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "讀取老闆資料失敗"
+    });
+  }
+});
+
+app.post("/api/admin/send-message", async (req, res) => {
+  try {
+    const { chatId, text } = req.body;
+
+    if (!chatId || !text) {
+      return res.status(400).json({
+        ok: false,
+        message: "chatId 和 text 必填"
+      });
+    }
+
+    await sendTelegramMessage(chatId, text);
+    res.json({ ok: true });
+  } catch (err) {
+    console.log("admin send message error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "發送訊息失敗"
+    });
+  }
+});
+
+app.post("/api/admin/push-payment", async (req, res) => {
+  try {
+    const { ownerId, chatId } = req.body;
+
+    if (!ownerId || !chatId) {
+      return res.status(400).json({
+        ok: false,
+        message: "ownerId 和 chatId 必填"
+      });
+    }
+
+    const [link, settings] = await Promise.all([
+      getPaymentLink(ownerId),
+      getAISettings(ownerId)
+    ]);
+
+    if (!link) {
+      return res.status(400).json({
+        ok: false,
+        message: "尚未設定付款連結"
+      });
+    }
+
+    const productName = settings?.product_name || "主要方案";
+    const productPrice = Number(settings?.product_price || 0);
+
+    await sendTelegramMessage(
+      chatId,
+      "我這邊幫你確認過了，現在開始會是比較好的時機。"
+    );
+
+    await sendTelegramMessage(
+      chatId,
+      `這是你可以直接開始的方式👇\n${link}`
+    );
+
+    await createOrder({
+      ownerId,
+      chatId,
+      name: "客戶",
+      plan: productName,
+      amount: productPrice,
+      paymentLink: link,
+      source: "admin",
+      status: "pending"
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.log("admin push payment error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "推付款失敗"
+    });
+  }
+});
+
+/* =============================
+   客戶 / 訂單
+============================= */
+
+app.get("/api/customers/:ownerId", async (req, res) => {
+  try {
+    const customers = await getCustomersByOwner(req.params.ownerId);
+    res.json({ ok: true, customers });
+  } catch (err) {
+    console.log("get customers error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "讀取客戶失敗"
+    });
+  }
+});
+
+app.get("/api/orders/:ownerId", async (req, res) => {
+  try {
+    const orders = await getOrders(req.params.ownerId);
+    res.json({ ok: true, orders });
+  } catch (err) {
+    console.log("get orders error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "讀取訂單失敗"
+    });
+  }
+});
+
+app.post("/api/mark-paid", async (req, res) => {
+  try {
+    const { chatId } = req.body;
+
+    if (!chatId) {
+      return res.status(400).json({
+        ok: false,
+        message: "chatId 必填"
+      });
+    }
+
+    await markOrderPaid(chatId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.log("mark paid error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "標記付款失敗"
+    });
+  }
+});
+
+/* =============================
+   付款連結
+============================= */
+
+app.post("/api/payment-link", async (req, res) => {
+  try {
+    const { ownerId, paymentLink } = req.body;
+
+    if (!ownerId) {
+      return res.status(400).json({
+        ok: false,
+        message: "ownerId 必填"
+      });
+    }
+
+    await savePaymentLink(ownerId, paymentLink || "");
+    res.json({ ok: true });
+  } catch (err) {
+    console.log("save payment link error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "儲存付款連結失敗"
+    });
+  }
+});
+
+app.get("/api/payment-link/:ownerId", async (req, res) => {
+  try {
+    const paymentLink = await getPaymentLink(req.params.ownerId);
+    res.json({ ok: true, paymentLink });
+  } catch (err) {
+    console.log("get payment link error:", err.message);
+    res.status(500).json({
+      ok: false,
+      message: "讀取付款連結失敗"
+    });
+  }
+});
+
+/* =============================
+   Telegram Webhook（核心 AI 成交）
+============================= */
 
 app.post("/webhook/telegram", async (req, res) => {
   try {
-    console.log("Webhook hit:", JSON.stringify(req.body));
+    const message = req.body?.message?.text || "";
+    const chatId = req.body?.message?.chat?.id || "";
+    const ownerId = req.query.ownerId || "";
 
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    const chatId = req.body?.message?.chat?.id;
-    const text = req.body?.message?.text || "";
-
-    console.log("Parsed message:", { chatId, text });
-
-    if (!chatId) {
-      console.log("No chatId, skipping.");
-      return res.json({ ok: true });
+    if (!message || !chatId || !ownerId) {
+      return res.sendStatus(200);
     }
 
-    const userId = String(chatId);
-    const reply = await routeMessage(text, userId, "telegram");
+    await handleUniversalAI({
+      ownerId,
+      chatId,
+      message,
+      platform: "telegram",
+      sendReply: async (text) => {
+        await sendTelegramMessage(chatId, text);
+      }
+    });
 
-    console.log("FINAL REPLY BEFORE SEND:", reply);
-
-    await sendTelegramMessage(token, chatId, reply || "System error");
-
-    console.log("Message sent successfully.");
-
-    return res.json({ ok: true });
+    res.sendStatus(200);
   } catch (err) {
-    console.log("Telegram webhook error:", err.message);
-    return res.json({ ok: true });
+    console.log("telegram webhook error:", err?.response?.data || err.message);
+    res.sendStatus(500);
   }
 });
 
-console.log("Starting AI Sales Bot...");
-console.log("PORT exists:", !!process.env.PORT);
-console.log("TELEGRAM token exists:", !!process.env.TELEGRAM_BOT_TOKEN);
-console.log("SUPABASE URL exists:", !!process.env.SUPABASE_URL);
-console.log("SUPABASE key exists:", !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY));
+/* =============================
+   META Webhook（Facebook / Instagram）
+============================= */
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("AI Sales Bot Running on port " + PORT);
+app.get("/webhook/meta", (req, res) => {
+  const verifyToken = process.env.META_VERIFY_TOKEN || "";
+
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === verifyToken) {
+    console.log("✅ Meta webhook verified");
+    return res.status(200).send(challenge);
+  }
+
+  return res.sendStatus(403);
+});
+
+app.post("/webhook/meta", async (req, res) => {
+  try {
+    const entries = req.body?.entry || [];
+
+    for (const entry of entries) {
+      const messagingList = entry?.messaging || [];
+
+      for (const event of messagingList) {
+        const senderId = event?.sender?.id || "";
+        const recipientId = event?.recipient?.id || "";
+        const message = event?.message?.text || "";
+
+        if (!senderId || !recipientId || !message) continue;
+
+        const { data: conn, error } = await supabase
+          .from("channel_connections")
+          .select("*")
+          .eq("external_id", String(recipientId))
+          .eq("status", "connected")
+          .maybeSingle();
+
+        if (error) throw error;
+        if (!conn) continue;
+
+        await handleUniversalAI({
+          ownerId: conn.owner_id,
+          chatId: senderId,
+          message,
+          platform: conn.platform || "facebook",
+          sendReply: async (text) => {
+            await axios.post(
+              `https://graph.facebook.com/${GRAPH_API_VERSION}/me/messages`,
+              {
+                recipient: { id: senderId },
+                messaging_type: "RESPONSE",
+                message: { text }
+              },
+              {
+                params: {
+                  access_token: conn.access_token
+                }
+              }
+            );
+          }
+        });
+      }
+    }
+
+    return res.sendStatus(200);
+  } catch (err) {
+    console.log("meta webhook error:", err?.response?.data || err.message);
+    return res.sendStatus(500);
+  }
+});
+
+/* =============================
+   自動追單（最強核心）
+============================= */
+
+function startAutoFollowUp() {
+  console.log("🔥 自動追單系統啟動");
+
+  setInterval(async () => {
+    try {
+      const list3 = await getFollowUpCustomers3Min();
+
+      for (const customer of list3) {
+        try {
+          const settings = await getAISettings(customer.owner_id);
+
+          if (settings?.follow_up_mode === "off") continue;
+          if (isAIDisabled(settings)) continue;
+
+          const text = getFollowUpMessage3Min(customer, settings || {});
+          await safeSendTelegramMessage(customer.chat_id, text);
+          await updateFollowUp(customer.chat_id, 1);
+        } catch (err) {
+          console.log("3min followup error:", err.message);
+        }
+      }
+
+      const list1 = await getFollowUpCustomers1Day();
+
+      for (const customer of list1) {
+        try {
+          const settings = await getAISettings(customer.owner_id);
+
+          if (settings?.follow_up_mode === "off") continue;
+          if (isAIDisabled(settings)) continue;
+
+          const text = getFollowUpMessage1Day(customer, settings || {});
+          await safeSendTelegramMessage(customer.chat_id, text);
+          await updateFollowUp(customer.chat_id, 2);
+        } catch (err) {
+          console.log("1day followup error:", err.message);
+        }
+      }
+    } catch (err) {
+      console.log("追單錯誤:", err.message);
+    }
+  }, 60000);
+}
+
+startAutoFollowUp();
+
+/* =============================
+   啟動
+============================= */
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running: ${PORT}`);
 });

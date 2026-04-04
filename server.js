@@ -3,7 +3,6 @@ import axios from "axios";
 import dotenv from "dotenv";
 import cors from "cors";
 import Stripe from "stripe";
-import crypto from "crypto";
 
 import {
   analyzeCustomer,
@@ -13,10 +12,7 @@ import {
 } from "./ai.js";
 
 import {
-  supabase,
   saveCustomer,
-  getCustomer,
-  savePaymentLink,
   getPaymentLink,
   createOrder,
   markOrderPaid
@@ -33,14 +29,14 @@ app.use(express.json());
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 /* =========================
-   🔥 基本測試
+   ✅ 測試
 ========================= */
 app.get("/", (req, res) => {
   res.send("AI Sales System Running 🚀");
 });
 
 /* =========================
-   🤖 Telegram Webhook
+   🤖 Telegram（最穩版）
 ========================= */
 app.post("/webhook/telegram", async (req, res) => {
   try {
@@ -51,13 +47,9 @@ app.post("/webhook/telegram", async (req, res) => {
 
     console.log("📩 Telegram:", text);
 
-    // AI 分析
     const analysis = await analyzeCustomer(text);
-
-    // AI 回覆
     const reply = await generateReply(text, analysis);
 
-    // 發送回 Telegram
     await axios.post(
       `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
       {
@@ -74,7 +66,7 @@ app.post("/webhook/telegram", async (req, res) => {
 });
 
 /* =========================
-   📸 IG / FB Webhook
+   📸 IG / FB
 ========================= */
 app.post("/webhook/meta", async (req, res) => {
   try {
@@ -90,26 +82,19 @@ app.post("/webhook/meta", async (req, res) => {
 
     console.log("📩 IG:", text);
 
-    // 客戶存入
     await saveCustomer({
       platform_id: senderId,
       message: text
     });
 
-    // AI 分析
     const analysis = await analyzeCustomer(text);
-
-    // AI 回覆
     let reply = await generatePlatformReply(text, analysis);
 
-    // 是否推付款
     if (await shouldOfferPayment(analysis)) {
-      const paymentLink = await getPaymentLink("growth");
-
-      reply += `\n\n👉 這裡可以直接開始：\n${paymentLink}`;
+      const link = await getPaymentLink("growth");
+      reply += `\n\n👉 立即開始：\n${link}`;
     }
 
-    // 回傳訊息
     await axios.post(
       `https://graph.facebook.com/v18.0/me/messages?access_token=${process.env.PAGE_ACCESS_TOKEN}`,
       {
@@ -130,18 +115,14 @@ app.post("/webhook/meta", async (req, res) => {
 ========================= */
 app.post("/create-checkout", async (req, res) => {
   try {
-    const { price = 1000, name = "AI Service" } = req.body;
-
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [
         {
           price_data: {
             currency: "usd",
-            product_data: {
-              name
-            },
-            unit_amount: price * 100
+            product_data: { name: "AI Service" },
+            unit_amount: 1000 * 100
           },
           quantity: 1
         }
@@ -174,7 +155,7 @@ app.post(
         process.env.STRIPE_WEBHOOK_SECRET
       );
     } catch (err) {
-      console.error("❌ Webhook verify fail:", err.message);
+      console.error("❌ Webhook:", err.message);
       return res.sendStatus(400);
     }
 

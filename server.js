@@ -3,18 +3,6 @@ import axios from "axios";
 import cors from "cors";
 import Stripe from "stripe";
 import crypto from "crypto";
-
-if (process.env.NODE_ENV !== "production") {
-  try {
-    const dotenv = await import("dotenv");
-    dotenv.default.config();
-    console.log("✅ dotenv loaded");
-  } catch (err) {
-    console.log("⚠️ dotenv not loaded:", err.message);
-  }
-}
-
-import {
   analyzeCustomer,
   generateReply,
   shouldOfferPayment,
